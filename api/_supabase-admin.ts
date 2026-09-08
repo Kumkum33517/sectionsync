@@ -8,13 +8,13 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../client/lib/database.types";
 
-const url     = process.env.VITE_SUPABASE_URL!;
-const svcKey  = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const url     = process.env.VITE_SUPABASE_URL ?? "";
+const svcKey  = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
 if (!url || !svcKey) {
-  throw new Error(
-    "Missing VITE_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment. " +
-    "Add them to .env.local — never commit secrets."
+  console.error(
+    "[SectionSync] Missing VITE_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY. " +
+    "Add them to Vercel Environment Variables."
   );
 }
 
