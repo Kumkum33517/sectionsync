@@ -1,0 +1,77 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap");
+
+@import "tailwindcss";
+
+@config "../tailwind.config.ts";
+
+@layer base {
+  :root {
+    --background: 72 23% 95%;
+    --foreground: 208 55% 10%;
+    --card: 72 33% 98%;
+    --card-foreground: 208 55% 10%;
+    --popover: 72 33% 98%;
+    --popover-foreground: 208 55% 10%;
+    --primary: 208 55% 10%;
+    --primary-foreground: 72 33% 98%;
+    --secondary: 89 31% 91%;
+    --secondary-foreground: 208 55% 10%;
+    --muted: 89 31% 91%;
+    --muted-foreground: 199 13% 46%;
+    --accent: 71 100% 68%;
+    --accent-foreground: 208 55% 10%;
+    --destructive: 13 54% 52%;
+    --destructive-foreground: 72 33% 98%;
+    --border: 100 15% 85%;
+    --input: 100 15% 85%;
+    --ring: 77 55% 44%;
+    --radius: 1rem;
+    --sidebar-background: 208 55% 10%;
+    --sidebar-foreground: 72 23% 95%;
+    --sidebar-primary: 71 100% 68%;
+    --sidebar-primary-foreground: 208 55% 10%;
+    --sidebar-accent: 205 31% 19%;
+    --sidebar-accent-foreground: 72 23% 95%;
+    --sidebar-border: 205 31% 19%;
+    --sidebar-ring: 77 55% 44%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "DM Sans", sans-serif;
+  }
+
+  button,
+  input {
+    font: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  :where(p, span, li, h1, h2, h3, h4, h5, h6, a, button, label, td, th) {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  pre,
+  code {
+    overflow-x: auto;
+    white-space: pre;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: "Space Grotesk", sans-serif;
+  }
+}
