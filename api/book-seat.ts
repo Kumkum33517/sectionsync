@@ -5,8 +5,8 @@
  * Authenticated, rate-limited, error-sanitized.
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { adminSupabase } from "./_supabase-admin";
-import { handleCors, getIp, checkRateLimit, safeError } from "./_utils";
+import { adminSupabase } from "./_supabase-admin.js";
+import { handleCors, getIp, checkRateLimit, safeError } from "./_utils.js";
 import { createClient } from "@supabase/supabase-js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

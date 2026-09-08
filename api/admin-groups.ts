@@ -12,8 +12,8 @@
  * Admin only. Rate limited.
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { adminSupabase } from "./_supabase-admin";
-import { handleCors, getIp, checkRateLimit, verifyAdmin, safeError } from "./_utils";
+import { adminSupabase } from "./_supabase-admin.js";
+import { handleCors, getIp, checkRateLimit, verifyAdmin, safeError } from "./_utils.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (handleCors(req, res)) return;

@@ -7,7 +7,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { adminSupabase } from "./_supabase-admin";
+import { adminSupabase } from "./_supabase-admin.js";
 import { createClient } from "@supabase/supabase-js";
 
 // ─────────────────────────────────────────────────────────────────

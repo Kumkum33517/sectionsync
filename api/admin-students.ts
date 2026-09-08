@@ -8,8 +8,8 @@
  * POST   /api/admin-students/bulk   — bulk import
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { adminSupabase } from "./_supabase-admin";
-import { handleCors, getIp, checkRateLimit, verifyAdmin, safeError } from "./_utils";
+import { adminSupabase } from "./_supabase-admin.js";
+import { handleCors, getIp, checkRateLimit, verifyAdmin, safeError } from "./_utils.js";
 
 const ALLOWED_INSERT = ["roll_number", "name", "email", "year"] as const;
 const ALLOWED_UPDATE = ["name", "roll_number", "year",

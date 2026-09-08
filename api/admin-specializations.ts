@@ -2,8 +2,8 @@
  * Admin specialization CRUD — rate limited + error sanitized.
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { adminSupabase } from "./_supabase-admin";
-import { handleCors, getIp, checkRateLimit, verifyAdmin, safeError } from "./_utils";
+import { adminSupabase } from "./_supabase-admin.js";
+import { handleCors, getIp, checkRateLimit, verifyAdmin, safeError } from "./_utils.js";
 
 const ALLOWED = ["name", "batch", "description", "active"] as const;
 
