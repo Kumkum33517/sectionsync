@@ -226,14 +226,6 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
     const em = email.trim().toLowerCase();
     if (!em) { setError("Enter your email address."); return; }
 
-    const isAdmin = state.adminUsers.find((a) => a.email.toLowerCase() === em);
-    const isStudent = state.students.find((s) => s.email.toLowerCase() === em);
-
-    if (!isAdmin && !isStudent) {
-      setError("This email is not authorized to access this system.");
-      return;
-    }
-
     setLoading(true);
     const result = await requestOtp(em);
     setLoading(false);
