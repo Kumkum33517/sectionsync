@@ -69,11 +69,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { error: otpErr } = await anonClient.auth.signInWithOtp({
     email: em,
     options: {
-      // shouldCreateUser true: creates an auth.users entry if none exists yet.
-      // We link it to our students table in verify-otp on first login.
       shouldCreateUser: true,
-      // Do NOT set emailRedirectTo — that switches Supabase to magic-link mode.
-      // Leaving it undefined forces the 6-digit OTP flow.
+      emailRedirectTo: "https://sectionsync.vercel.app/",
     },
   });
 

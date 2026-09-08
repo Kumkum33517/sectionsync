@@ -226,18 +226,11 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
     const em = email.trim().toLowerCase();
     if (!em) { setError("Enter your email address."); return; }
 
-    // Check if email is an admin OR a student — both go through OTP
     const isAdmin = state.adminUsers.find((a) => a.email.toLowerCase() === em);
     const isStudent = state.students.find((s) => s.email.toLowerCase() === em);
 
     if (!isAdmin && !isStudent) {
-      // Same generic message for both unknown admins and unknown students
-      // so attackers can't enumerate which list the email is in
-      if (!em.endsWith("@ncuindia.edu") && !isAdmin) {
-        setError("This email is not authorized to access this system.");
-      } else {
-        setError("This email is not authorized to access this system.");
-      }
+      setError("This email is not authorized to access this system.");
       return;
     }
 
@@ -246,7 +239,7 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
     setLoading(false);
 
     if (!result.ok) {
-      setError(result.error ?? "Failed to send OTP.");
+      setError(result.error ?? "Failed to send sign-in link.");
       return;
     }
     setStep("otp");
@@ -337,36 +330,21 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
                 <div>
                   <h1 className="font-display text-xl font-bold text-[#0b1825]">Check your inbox</h1>
                   <p className="text-xs text-[#71818a] mt-0.5">
-                    A 6-digit OTP was sent to <strong>{email}</strong>
+                    A sign-in link was sent to <strong>{email}</strong>
                   </p>
                 </div>
               </div>
 
-              <form onSubmit={submitOtp} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-[#0b1825] mb-1.5">
-                    6-digit OTP
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={otp}
-                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
-                    placeholder="••••••"
-                    autoFocus
-                    className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-4 py-3 text-2xl font-bold tracking-[0.4em] text-center outline-none focus:border-[#0b1825] focus:ring-2 focus:ring-[#0b1825]/10 transition"
-                  />
-                </div>
-                {error && (
-                  <p className="text-sm text-red-600 flex items-center gap-1.5">
-                    <AlertTriangle size={13} />{error}
-                  </p>
-                )}
-                <Btn type="submit" className="w-full" disabled={otp.length !== 6 || loading}>
-                  {loading ? "Verifying…" : "Verify & sign in"}
-                </Btn>
-              </form>
+              <div className="rounded-xl bg-[#f9faf3] border border-[#eef0e4] px-4 py-4 text-sm text-[#71818a] text-center">
+                Click the link in your email to sign in. The link expires in 10 minutes and can only be used once.
+              </div>
+
+              {error && (
+                <p className="mt-3 text-sm text-red-600 flex items-center gap-1.5">
+                  <AlertTriangle size={13} />{error}
+                </p>
+              )}
+
               <p className="mt-4 text-center text-xs text-[#71818a]">
                 Didn't receive it?{" "}
                 <button
@@ -374,7 +352,7 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
                   disabled={loading}
                   className="underline hover:text-[#0b1825] disabled:opacity-40"
                 >
-                  Resend OTP
+                  Resend link
                 </button>
               </p>
             </>
