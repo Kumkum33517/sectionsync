@@ -9,8 +9,8 @@
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
-import { adminSupabase } from "./_supabase-admin.js";
-import { handleCors, getIp } from "./_utils.js";
+import { adminSupabase } from "./_supabase-admin";
+import { handleCors, getIp } from "./_utils";
 
 const VERIFY_LIMIT = 5;
 const WINDOW_MIN   = 10;

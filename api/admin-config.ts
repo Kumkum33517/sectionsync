@@ -3,8 +3,8 @@
  * Rate limited + error sanitized.
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { adminSupabase } from "./_supabase-admin.js";
-import { handleCors, getIp, checkRateLimit, verifyAdmin, safeError } from "./_utils.js";
+import { adminSupabase } from "./_supabase-admin";
+import { handleCors, getIp, checkRateLimit, verifyAdmin, safeError } from "./_utils";
 
 const VALID_PHASES = [
   "SPEC_WINDOW_OPEN", "SPEC_WINDOW_CLOSED",

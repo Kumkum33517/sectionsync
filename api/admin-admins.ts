@@ -2,8 +2,8 @@
  * Admin access management — rate limited + error sanitized.
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { adminSupabase } from "./_supabase-admin.js";
-import { handleCors, getIp, checkRateLimit, verifyAdmin, safeError } from "./_utils.js";
+import { adminSupabase } from "./_supabase-admin";
+import { handleCors, getIp, checkRateLimit, verifyAdmin, safeError } from "./_utils";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (handleCors(req, res)) return;

@@ -9,8 +9,8 @@
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
-import { adminSupabase } from "./_supabase-admin.js";
-import { handleCors, getIp } from "./_utils.js";
+import { adminSupabase } from "./_supabase-admin";
+import { handleCors, getIp } from "./_utils";
 
 const SEND_LIMIT_EMAIL = 3;
 const SEND_LIMIT_IP    = 5;
