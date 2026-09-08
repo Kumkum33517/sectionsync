@@ -219,7 +219,6 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
   const [otp, setOtp] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [demoOtp, setDemoOtp] = useState<string | null>(null);
 
   const submitEmail = async (e: FormEvent) => {
     e.preventDefault();
@@ -227,23 +226,18 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
     const em = email.trim().toLowerCase();
     if (!em) { setError("Enter your email address."); return; }
 
-    // Admin check — direct access, no OTP
-    const adminUser = state.adminUsers.find((a) => a.email.toLowerCase() === em);
-    if (adminUser) {
-      onLogin({ role: "admin", email: em });
-      return;
-    }
+    // Check if email is an admin OR a student — both go through OTP
+    const isAdmin = state.adminUsers.find((a) => a.email.toLowerCase() === em);
+    const isStudent = state.students.find((s) => s.email.toLowerCase() === em);
 
-    // Students must use @ncuindia.edu
-    if (!em.endsWith("@ncuindia.edu")) {
-      setError("Student accounts must use an @ncuindia.edu email address.");
-      return;
-    }
-
-    // Check authorized student list
-    const student = state.students.find((s) => s.email.toLowerCase() === em);
-    if (!student) {
-      setError("This email is not in the authorized student list. Contact your admin.");
+    if (!isAdmin && !isStudent) {
+      // Same generic message for both unknown admins and unknown students
+      // so attackers can't enumerate which list the email is in
+      if (!em.endsWith("@ncuindia.edu") && !isAdmin) {
+        setError("This email is not authorized to access this system.");
+      } else {
+        setError("This email is not authorized to access this system.");
+      }
       return;
     }
 
@@ -255,7 +249,6 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
       setError(result.error ?? "Failed to send OTP.");
       return;
     }
-    if (result._demoCode) setDemoOtp(result._demoCode);
     setStep("otp");
   };
 
@@ -268,8 +261,14 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
     setLoading(false);
 
     if (result.ok) {
-      const student = state.students.find((s) => s.email.toLowerCase() === em)!;
-      onLogin({ role: "student", studentId: student.id, email: em });
+      // Role determined server-side — check if admin first, then student
+      const adminUser = state.adminUsers.find((a) => a.email.toLowerCase() === em);
+      if (adminUser) {
+        onLogin({ role: "admin", email: em });
+      } else {
+        const student = state.students.find((s) => s.email.toLowerCase() === em);
+        onLogin({ role: "student", studentId: student?.id, email: em });
+      }
     } else {
       setError(result.error ?? "Incorrect OTP. Try again.");
     }
@@ -278,12 +277,10 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
   const resendOtp = async () => {
     setError("");
     setOtp("");
-    setDemoOtp(null);
     setLoading(true);
     const result = await requestOtp(email.trim().toLowerCase());
     setLoading(false);
     if (!result.ok) setError(result.error ?? "Failed to resend OTP.");
-    if (result._demoCode) setDemoOtp(result._demoCode);
   };
 
   return (
@@ -312,7 +309,7 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="22csu001@ncuindia.edu"
+                  placeholder="Enter your NCU email"
                   autoFocus
                 />
                 {error && (
@@ -324,34 +321,11 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
                   {loading ? "Sending OTP…" : "Continue"}
                 </Btn>
               </form>
-
-              {/* Quick access */}
-              <div className="mt-6 pt-5 border-t border-[#eef0e4]">
-                <p className="text-xs text-[#71818a] mb-3 font-medium uppercase tracking-wide">
-                  Demo quick access
-                </p>
-                <div className="flex flex-col gap-2">
-                  <button
-                    onClick={() => onLogin({ role: "admin", email: "manvibreja@ncuindia.edu" })}
-                    className="text-left rounded-xl border border-[#dde4cc] px-4 py-2.5 text-sm hover:bg-[#f5f6ef] transition"
-                  >
-                    <span className="font-semibold text-[#0b1825]">Admin</span>
-                    <span className="text-[#71818a] ml-2">manvibreja@ncuindia.edu</span>
-                  </button>
-                  <button
-                    onClick={() => onLogin({ role: "student", studentId: "student-1", email: "22csu001@ncuindia.edu" })}
-                    className="text-left rounded-xl border border-[#dde4cc] px-4 py-2.5 text-sm hover:bg-[#f5f6ef] transition"
-                  >
-                    <span className="font-semibold text-[#0b1825]">Student</span>
-                    <span className="text-[#71818a] ml-2">Kumkum Singh · 22CSU001</span>
-                  </button>
-                </div>
-              </div>
             </>
           ) : (
             <>
               <button
-                onClick={() => { setStep("email"); setOtp(""); setError(""); setDemoOtp(null); }}
+                onClick={() => { setStep("email"); setOtp(""); setError(""); }}
                 className="flex items-center gap-1.5 text-xs text-[#71818a] hover:text-[#0b1825] mb-5 transition"
               >
                 <ChevronRight size={12} className="rotate-180" /> Change email
@@ -367,13 +341,6 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
                   </p>
                 </div>
               </div>
-
-              {demoOtp && (
-                <div className="mb-4 rounded-xl bg-[#d8ff5b]/20 border border-[#d8ff5b] px-4 py-3 text-sm text-[#3a5c00]">
-                  <span className="font-semibold">Demo OTP:</span> {demoOtp}
-                  <span className="text-xs ml-2 text-[#71818a]">(visible in demo mode only)</span>
-                </div>
-              )}
 
               <form onSubmit={submitOtp} className="space-y-4">
                 <div>
