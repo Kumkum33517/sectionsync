@@ -1201,10 +1201,11 @@ function normaliseRow(cols: string[]): { name: string; rollNumber: string; email
   return { name, rollNumber, email };
 }
 
-function AdminStudentList({ state, showToast, setState }: {
+function AdminStudentList({ state, showToast, setState, session }: {
   state: AppState;
   showToast: (m: string, err?: boolean) => void;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
+  session: NonNullable<Session>;
 }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -1304,16 +1305,46 @@ function AdminStudentList({ state, showToast, setState }: {
     setUploading(false);
   };
 
-  const commitUpload = () => {
+  const commitUpload = async () => {
     if (!uploadPreview) return;
     const { rows } = uploadPreview;
+
+    // Determine which rows are actually new
+    const toSave = uploadMode === "replace"
+      ? rows
+      : rows.filter((n) => !state.students.some((e) => e.email === n.email));
+
+    // Save to Supabase first
+    try {
+      const apiRows = toSave.map((s) => ({
+        name: s.name,
+        roll_number: s.rollNumber,
+        email: s.email,
+      }));
+      const res = await fetch("/api/admin-students/bulk", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.accessToken ?? ""}`,
+        },
+        body: JSON.stringify({ students: apiRows }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error ?? "Failed to save students.", true);
+        return;
+      }
+      showToast(`Saved ${data.inserted ?? toSave.length} students to database. Auth accounts created.`);
+    } catch {
+      showToast("Network error saving students.", true);
+      return;
+    }
+
+    // Update local state to reflect the change
     if (uploadMode === "replace") {
       setState((p) => ({ ...p, students: rows }));
-      showToast(`Student list replaced with ${rows.length} entries.`);
     } else {
-      const newRows = rows.filter((n) => !state.students.some((e) => e.email === n.email));
-      setState((p) => ({ ...p, students: [...p.students, ...newRows] }));
-      showToast(`Added ${newRows.length} new students (${rows.length - newRows.length} duplicates skipped).`);
+      setState((p) => ({ ...p, students: [...p.students, ...toSave] }));
     }
     setUploadPreview(null);
   };
@@ -1321,24 +1352,50 @@ function AdminStudentList({ state, showToast, setState }: {
   const openAdd = () => { setForm({ name: "", rollNumber: "", email: "" }); setFormErr(""); setEditId(null); setShowAdd(true); };
   const openEdit = (s: Student) => { setForm({ name: s.name, rollNumber: s.rollNumber, email: s.email }); setFormErr(""); setEditId(s.id); setShowAdd(true); };
 
-  const saveStudent = () => {
+  const saveStudent = async () => {
     setFormErr("");
     const { name, rollNumber, email } = form;
     if (!name.trim() || !rollNumber.trim() || !email.trim()) { setFormErr("All fields are required."); return; }
     if (!email.includes("@")) { setFormErr("Invalid email address."); return; }
     const dup = state.students.find((s) => s.email.toLowerCase() === email.toLowerCase() && s.id !== editId);
     if (dup) { setFormErr("A student with this email already exists."); return; }
+
     if (editId) {
+      // Update in Supabase
+      try {
+        const res = await fetch("/api/admin-students", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+          body: JSON.stringify({ id: editId, name: name.trim(), roll_number: rollNumber.trim(), email: email.trim().toLowerCase() }),
+        });
+        if (!res.ok) { const d = await res.json(); setFormErr(d.error ?? "Failed to update."); return; }
+      } catch { setFormErr("Network error."); return; }
       setState((p) => ({ ...p, students: p.students.map((s) => s.id === editId ? { ...s, name: name.trim(), rollNumber: rollNumber.trim(), email: email.trim().toLowerCase() } : s) }));
       showToast("Student updated.");
     } else {
+      // Add to Supabase
+      try {
+        const res = await fetch("/api/admin-students", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+          body: JSON.stringify({ name: name.trim(), roll_number: rollNumber.trim(), email: email.trim().toLowerCase() }),
+        });
+        if (!res.ok) { const d = await res.json(); setFormErr(d.error ?? "Failed to add student."); return; }
+      } catch { setFormErr("Network error."); return; }
       setState((p) => ({ ...p, students: [...p.students, { id: `student-${Date.now()}`, name: name.trim(), rollNumber: rollNumber.trim(), email: email.trim().toLowerCase(), chosenSpecialization: null, assignedSectionId: null, assignedSeat: null, group: null }] }));
       showToast("Student added.");
     }
     setShowAdd(false);
   };
 
-  const removeStudent = (id: string) => {
+  const removeStudent = async (id: string) => {
+    try {
+      const res = await fetch(`/api/admin-students?id=${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.accessToken ?? ""}` },
+      });
+      if (!res.ok) { const d = await res.json(); showToast(d.error ?? "Failed to remove.", true); return; }
+    } catch { showToast("Network error.", true); return; }
     setState((p) => ({ ...p, students: p.students.filter((s) => s.id !== id) }));
     showToast("Student removed.");
   };
@@ -2313,7 +2370,7 @@ export default function Index() {
             {adminPage === "sections"        && <AdminSections state={state} showToast={showToast} setState={setState} />}
             {adminPage === "section-window"  && <AdminSectionWindow state={state} showToast={showToast} setState={setState} />}
             {adminPage === "students"        && <AdminStudents state={state} />}
-            {adminPage === "student-list"    && <AdminStudentList state={state} showToast={showToast} setState={setState} />}
+            {adminPage === "student-list"    && <AdminStudentList state={state} showToast={showToast} setState={setState} session={session} />}
             {adminPage === "admin-access"    && <AdminAccessManagement state={state} showToast={showToast} setState={setState} currentEmail={session.email} />}
             {adminPage === "change-password" && <ChangePasswordPage session={session} showToast={showToast} />}
           </>
