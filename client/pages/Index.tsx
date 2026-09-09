@@ -73,33 +73,37 @@ async function signIn(email: string, password: string): Promise<{
   ok: boolean; error?: string; role?: string;
   access_token?: string; refresh_token?: string; expires_at?: number;
 }> {
-  try {
-    const res = await fetch("/api/sign-in", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) return { ok: false, error: data.error ?? "Incorrect email or password." };
-    return { ok: true, ...data };
-  } catch {
-    return { ok: false, error: "Network error. Check your connection." };
+  // Sign in directly via Supabase — this sets the session properly
+  // so getSession() works throughout the app
+  const { createClient } = await import("@supabase/supabase-js");
+  const sb = createClient(
+    import.meta.env.VITE_SUPABASE_URL as string,
+    import.meta.env.VITE_SUPABASE_ANON_KEY as string
+  );
+
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  if (error || !data.session) {
+    return { ok: false, error: "Incorrect email or password." };
   }
+
+  // Determine role by checking admins table
+  const { data: adminRow } = await sb
+    .from("admins").select("id").eq("email", email.toLowerCase()).maybeSingle();
+
+  return {
+    ok:            true,
+    role:          adminRow ? "admin" : "student",
+    access_token:  data.session.access_token,
+    refresh_token: data.session.refresh_token,
+    expires_at:    data.session.expires_at,
+  };
 }
 
-async function changePassword(accessToken: string, newPassword: string): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const res = await fetch("/api/change-password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ new_password: newPassword }),
-    });
-    const data = await res.json();
-    if (!res.ok) return { ok: false, error: data.error ?? "Failed to update password." };
-    return { ok: true };
-  } catch {
-    return { ok: false, error: "Network error." };
-  }
+async function changePassword(newPassword: string): Promise<{ ok: boolean; error?: string }> {
+  const { supabase } = await import("@/lib/supabase");
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) return { ok: false, error: "Failed to update password. Please try again." };
+  return { ok: true };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1314,12 +1318,7 @@ function AdminStudentList({ state, showToast, setState, session }: {
       : rows.filter((n) => !state.students.some((e) => e.email === n.email));
 
     // Get fresh token from Supabase session
-    const { createClient } = await import("@supabase/supabase-js");
-    const sb = createClient(
-      import.meta.env.VITE_SUPABASE_URL as string,
-      import.meta.env.VITE_SUPABASE_ANON_KEY as string
-    );
-    const { data: { session: sbSession } } = await sb.auth.getSession();
+    const { data: { session: sbSession } } = await (await import("@/lib/supabase")).supabase.auth.getSession();
     const token = sbSession?.access_token ?? session.accessToken ?? "";
 
     if (!token) {
@@ -1360,6 +1359,12 @@ function AdminStudentList({ state, showToast, setState, session }: {
     setUploadPreview(null);
   };
 
+  const getToken = async () => {
+    const { supabase } = await import("@/lib/supabase");
+    const { data: { session: s } } = await supabase.auth.getSession();
+    return s?.access_token ?? session.accessToken ?? "";
+  };
+
   const openAdd = () => { setForm({ name: "", rollNumber: "", email: "" }); setFormErr(""); setEditId(null); setShowAdd(true); };
   const openEdit = (s: Student) => { setForm({ name: s.name, rollNumber: s.rollNumber, email: s.email }); setFormErr(""); setEditId(s.id); setShowAdd(true); };
 
@@ -1370,13 +1375,14 @@ function AdminStudentList({ state, showToast, setState, session }: {
     if (!email.includes("@")) { setFormErr("Invalid email address."); return; }
     const dup = state.students.find((s) => s.email.toLowerCase() === email.toLowerCase() && s.id !== editId);
     if (dup) { setFormErr("A student with this email already exists."); return; }
+    const tok = await getToken();
 
     if (editId) {
       // Update in Supabase
       try {
         const res = await fetch("/api/admin-students", {
           method: "PUT",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
           body: JSON.stringify({ id: editId, name: name.trim(), roll_number: rollNumber.trim(), email: email.trim().toLowerCase() }),
         });
         if (!res.ok) { const d = await res.json(); setFormErr(d.error ?? "Failed to update."); return; }
@@ -1388,7 +1394,7 @@ function AdminStudentList({ state, showToast, setState, session }: {
       try {
         const res = await fetch("/api/admin-students", {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
           body: JSON.stringify({ name: name.trim(), roll_number: rollNumber.trim(), email: email.trim().toLowerCase() }),
         });
         if (!res.ok) { const d = await res.json(); setFormErr(d.error ?? "Failed to add student."); return; }
@@ -1400,10 +1406,11 @@ function AdminStudentList({ state, showToast, setState, session }: {
   };
 
   const removeStudent = async (id: string) => {
+    const tok = await getToken();
     try {
       const res = await fetch(`/api/admin-students?id=${id}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${session.accessToken ?? ""}` },
+        headers: { Authorization: `Bearer ${tok}` },
       });
       if (!res.ok) { const d = await res.json(); showToast(d.error ?? "Failed to remove.", true); return; }
     } catch { showToast("Network error.", true); return; }
@@ -2292,10 +2299,9 @@ function ChangePasswordPage({ session, showToast }: {
     if (!current || !newPass || !confirm) { setError("All fields are required."); return; }
     if (newPass.length < 6) { setError("New password must be at least 6 characters."); return; }
     if (newPass !== confirm) { setError("Passwords do not match."); return; }
-    if (!session.accessToken) { setError("Session expired. Please sign in again."); return; }
 
     setLoading(true);
-    const result = await changePassword(session.accessToken, newPass);
+    const result = await changePassword(newPass);
     setLoading(false);
 
     if (result.ok) {
