@@ -73,30 +73,26 @@ async function signIn(email: string, password: string): Promise<{
   ok: boolean; error?: string; role?: string;
   access_token?: string; refresh_token?: string; expires_at?: number;
 }> {
-  // Sign in directly via Supabase — this sets the session properly
-  // so getSession() works throughout the app
-  const { createClient } = await import("@supabase/supabase-js");
-  const sb = createClient(
-    import.meta.env.VITE_SUPABASE_URL as string,
-    import.meta.env.VITE_SUPABASE_ANON_KEY as string
-  );
+  try {
+    // Step 1: call server-side API — checks admins table with service role key
+    // so role detection is always correct regardless of RLS
+    const res = await fetch("/api/sign-in", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error ?? "Incorrect email or password." };
 
-  const { data, error } = await sb.auth.signInWithPassword({ email, password });
-  if (error || !data.session) {
-    return { ok: false, error: "Incorrect email or password." };
+    // Step 2: also sign in via Supabase client so the session is established
+    // locally — this makes getSession() work for subsequent API calls
+    const { supabase } = await import("@/lib/supabase");
+    await supabase.auth.signInWithPassword({ email, password });
+
+    return { ok: true, ...data };
+  } catch {
+    return { ok: false, error: "Network error. Check your connection." };
   }
-
-  // Determine role by checking admins table
-  const { data: adminRow } = await sb
-    .from("admins").select("id").eq("email", email.toLowerCase()).maybeSingle();
-
-  return {
-    ok:            true,
-    role:          adminRow ? "admin" : "student",
-    access_token:  data.session.access_token,
-    refresh_token: data.session.refresh_token,
-    expires_at:    data.session.expires_at,
-  };
 }
 
 async function changePassword(newPassword: string): Promise<{ ok: boolean; error?: string }> {
