@@ -7,8 +7,16 @@
  */
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { adminSupabase } from "./_supabase-admin";
 import { createClient } from "@supabase/supabase-js";
+
+// Create admin client inline — avoids cross-bundle import issues on Vercel
+function getAdminClient() {
+  const url = process.env.VITE_SUPABASE_URL ?? "";
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+  });
+}
 
 // ─────────────────────────────────────────────────────────────────
 // Error sanitization
@@ -94,7 +102,7 @@ export async function checkRateLimit(opts: RateLimitOptions): Promise<{ limited:
   }
 
   // Log the attempt to the general rate limit table (no action CHECK constraint here)
-  await adminSupabase.from("rate_limit_log").insert({
+  await getAdminClient().from("rate_limit_log").insert({
     email: email ?? "unknown",
     ip,
     action,
