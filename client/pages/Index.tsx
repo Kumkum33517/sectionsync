@@ -1402,9 +1402,12 @@ function AdminStudentList({ state, showToast, setState, session }: {
   };
 
   const getToken = async () => {
+    // Use the session access token directly — more reliable than getSession()
+    // which may not be set if login went through our custom API route
+    if (session.accessToken) return session.accessToken;
     const { supabase } = await import("@/lib/supabase");
     const { data: { session: s } } = await supabase.auth.getSession();
-    return s?.access_token ?? session.accessToken ?? "";
+    return s?.access_token ?? "";
   };
 
   const openAdd = () => { setForm({ name: "", rollNumber: "", email: "" }); setFormErr(""); setEditId(null); setShowAdd(true); };
