@@ -1195,6 +1195,8 @@ function normaliseRow(cols: string[]): { name: string; rollNumber: string; email
     if (!v) continue;
     if (!email && v.includes("@") && v.includes(".")) { email = v.toLowerCase(); continue; }
     if (!rollNumber && /\b\d{2}[a-zA-Z]{2,4}\d{3}\b/i.test(v)) { rollNumber = v.toUpperCase(); continue; }
+    // Skip serial numbers (purely numeric values like 1, 2, 3)
+    if (/^\d+$/.test(v)) continue;
     if (!name) { name = v; continue; }
   }
   if (!email) return null;
@@ -1219,6 +1221,32 @@ function AdminStudentList({ state, showToast, setState, session }: {
 
   const PAGE_SIZE = 25;
 
+  // Load students from Supabase on mount and after uploads
+  const loadStudentsFromSupabase = async () => {
+    try {
+      const tok = await getToken();
+      const res = await fetch("/api/admin-students", {
+        headers: { Authorization: `Bearer ${tok}` }
+      });
+      if (res.ok) {
+        const { data } = await res.json();
+        const students: Student[] = (data ?? []).map((s: any) => ({
+          id:                   s.id,
+          rollNumber:           s.roll_number,
+          name:                 s.name,
+          email:                s.email,
+          chosenSpecialization: s.chosen_specialization_id ?? null,
+          assignedSectionId:    s.assigned_section_id ?? null,
+          assignedSeat:         s.assigned_seat ?? null,
+          group:                s.group_number ?? null,
+        }));
+        setState((p) => ({ ...p, students }));
+      }
+    } catch { /* silently ignore */ }
+  };
+
+  useEffect(() => { loadStudentsFromSupabase(); }, []);
+
   const filtered = state.students.filter((s) => {
     const q = search.toLowerCase();
     return !q || s.name.toLowerCase().includes(q) || s.rollNumber.toLowerCase().includes(q) || s.email.toLowerCase().includes(q);
@@ -1230,7 +1258,7 @@ function AdminStudentList({ state, showToast, setState, session }: {
 
   const handleSearch = (val: string) => {
     setSearch(val);
-    setPage(1); // reset to first page on new search
+    setPage(1);
   };
 
   function rowsToStudents(rows: { name: string; rollNumber: string; email: string }[]): Student[] {
@@ -1353,6 +1381,8 @@ function AdminStudentList({ state, showToast, setState, session }: {
       setState((p) => ({ ...p, students: [...p.students, ...toSave] }));
     }
     setUploadPreview(null);
+    // Reload from Supabase to get accurate data
+    setTimeout(() => loadStudentsFromSupabase(), 1000);
   };
 
   const getToken = async () => {
