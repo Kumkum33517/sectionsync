@@ -4,11 +4,12 @@
  * Email + password authentication.
  * Returns { ok, role, access_token, refresh_token, expires_at }
  */
-const { createClient } = require("@supabase/supabase-js");
-const { adminSupabase } = require("./_supabase-admin");
-const { handleCors, getIp, checkRateLimit, safeError } = require("./_utils");
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { createClient } from "@supabase/supabase-js";
+import { adminSupabase } from "./_supabase-admin";
+import { handleCors, getIp, checkRateLimit, safeError } from "./_utils";
 
-module.exports = async function handler(req, res) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (handleCors(req, res)) return;
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed." });
 
@@ -20,17 +21,15 @@ module.exports = async function handler(req, res) {
   const em = email.trim().toLowerCase();
   const ip = getIp(req);
 
-  // Rate limit: 5 attempts per email per 10 minutes
   const rl = await checkRateLimit({
     action: "sign_in", email: em, ip,
     perEmailLimit: 5, perIpLimit: 20, windowMinutes: 10,
   });
   if (rl.limited) return res.status(429).json({ error: rl.message });
 
-  // Sign in with Supabase Auth
   const anonClient = createClient(
-    process.env.VITE_SUPABASE_URL,
-    process.env.VITE_SUPABASE_ANON_KEY
+    process.env.VITE_SUPABASE_URL!,
+    process.env.VITE_SUPABASE_ANON_KEY!
   );
 
   const { data, error } = await anonClient.auth.signInWithPassword({ email: em, password });
@@ -39,11 +38,9 @@ module.exports = async function handler(req, res) {
     return res.status(401).json({ error: "Incorrect email or password." });
   }
 
-  // Determine role server-side
   const { data: adminRow } = await adminSupabase
     .from("admins").select("id").eq("email", em).maybeSingle();
 
-  // Link auth_id to student record on first login
   if (!adminRow) {
     await adminSupabase.from("students")
       .update({ auth_id: data.user.id })
@@ -57,4 +54,4 @@ module.exports = async function handler(req, res) {
     refresh_token: data.session.refresh_token,
     expires_at:    data.session.expires_at,
   });
-};
+}

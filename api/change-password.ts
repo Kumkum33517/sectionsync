@@ -4,10 +4,11 @@
  * Requires valid JWT. Updates the authenticated user's password.
  * Body: { new_password: string }
  */
-const { createClient } = require("@supabase/supabase-js");
-const { handleCors, getIp, checkRateLimit } = require("./_utils");
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { createClient } from "@supabase/supabase-js";
+import { handleCors, getIp, checkRateLimit } from "./_utils";
 
-module.exports = async function handler(req, res) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (handleCors(req, res)) return;
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed." });
 
@@ -26,10 +27,9 @@ module.exports = async function handler(req, res) {
   });
   if (rl.limited) return res.status(429).json({ error: rl.message });
 
-  // Use the user's own token to update their password
   const userClient = createClient(
-    process.env.VITE_SUPABASE_URL,
-    process.env.VITE_SUPABASE_ANON_KEY,
+    process.env.VITE_SUPABASE_URL!,
+    process.env.VITE_SUPABASE_ANON_KEY!,
     { global: { headers: { Authorization: `Bearer ${token}` } } }
   );
 
@@ -37,4 +37,4 @@ module.exports = async function handler(req, res) {
   if (error) return res.status(400).json({ error: "Failed to update password. Please try again." });
 
   return res.status(200).json({ ok: true });
-};
+}
