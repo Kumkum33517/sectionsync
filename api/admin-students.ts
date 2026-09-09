@@ -56,6 +56,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     const { error } = await adminSupabase.from("students").insert(fields);
     if (error) return res.status(error.code === "23505" ? 409 : 500).json({ error: safeError(error) });
+
+    // Auto-create auth account with default password
+    const rollNumber = (fields.roll_number as string ?? "").toLowerCase();
+    const { error: authErr } = await adminSupabase.auth.admin.createUser({
+      email: (fields.email as string),
+      password: `${rollNumber}@1234`,
+      email_confirm: true,
+    });
+    if (!authErr) {
+      const { data: authUser } = await adminSupabase.auth.admin.getUserByEmail(fields.email as string);
+      if (authUser?.user) {
+        await adminSupabase.from("students").update({ auth_id: authUser.user.id }).eq("email", fields.email);
+      }
+    }
     return res.status(201).json({ ok: true });
   }
 
@@ -70,12 +84,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .filter((r) => r.email && r.name && r.roll_number);
     if (clean.length === 0) return res.status(400).json({ error: "No valid student rows found." });
 
+    // Upsert students table first
     const { data, error } = await adminSupabase
       .from("students")
       .upsert(clean as any, { onConflict: "email", ignoreDuplicates: true })
-      .select("id");
+      .select("id, email, roll_number");
     if (error) return res.status(500).json({ error: safeError(error) });
-    return res.status(200).json({ ok: true, inserted: data?.length ?? 0 });
+
+    // Auto-create Supabase Auth accounts with default password rollnumber@1234
+    let authCreated = 0;
+    for (const student of data ?? []) {
+      const defaultPassword = `${(student.roll_number as string).toLowerCase()}@1234`;
+      // createUser will fail silently if user already exists — that's fine
+      const { error: authErr } = await adminSupabase.auth.admin.createUser({
+        email: student.email as string,
+        password: defaultPassword,
+        email_confirm: true, // skip email confirmation
+      });
+      if (!authErr) {
+        authCreated++;
+        // Link auth_id back to students row
+        const { data: authUser } = await adminSupabase.auth.admin.getUserByEmail(student.email as string);
+        if (authUser?.user) {
+          await adminSupabase.from("students")
+            .update({ auth_id: authUser.user.id })
+            .eq("email", student.email);
+        }
+      }
+    }
+
+    return res.status(200).json({ ok: true, inserted: data?.length ?? 0, authCreated });
   }
 
   // ── PUT ──────────────────────────────────────────────────────────

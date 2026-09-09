@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import {
   AlertTriangle,
   ArrowLeftRight,
+  BookOpen,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -10,6 +11,7 @@ import {
   Clock,
   Download,
   GraduationCap,
+  KeyRound,
   LayoutDashboard,
   Lock,
   LogOut,
@@ -22,14 +24,13 @@ import {
   Sparkles,
   Table2,
   Trash2,
+  ToggleLeft,
+  ToggleRight,
   Upload,
   UserCog,
   Users,
   Waypoints,
   X,
-  BookOpen,
-  ToggleLeft,
-  ToggleRight,
 } from "lucide-react";
 import {
   activeSpecNames,
@@ -50,7 +51,7 @@ import {
 // ─────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────
-type Session = { role: "admin" | "student"; studentId?: string; email: string } | null;
+type Session = { role: "admin" | "student"; studentId?: string; email: string; accessToken?: string } | null;
 type Toast = { message: string; error?: boolean } | null;
 type AdminPage =
   | "dashboard"
@@ -60,55 +61,44 @@ type AdminPage =
   | "section-window"
   | "students"
   | "student-list"
-  | "admin-access";
-type StudentPage = "dashboard" | "spec-selection" | "section-seat" | "swaps";
+  | "admin-access"
+  | "change-password";
+type StudentPage = "dashboard" | "spec-selection" | "section-seat" | "swaps" | "change-password";
 
 // ─────────────────────────────────────────────────────────────────
-// OTP — tries the real server API first; falls back to client-side
-// simulation when the API is not running (local dev without vercel dev)
+// Password-based sign-in
 // ─────────────────────────────────────────────────────────────────
 
-// Client-side fallback store (removed before production)
-type _OtpEntry = { code: string; expires: number };
-const _otpStore: Record<string, _OtpEntry> = {};
-
-async function requestOtp(email: string): Promise<{ ok: boolean; error?: string; _demoCode?: string }> {
+async function signIn(email: string, password: string): Promise<{
+  ok: boolean; error?: string; role?: string;
+  access_token?: string; refresh_token?: string; expires_at?: number;
+}> {
   try {
-    const res = await fetch("/api/send-otp", {
+    const res = await fetch("/api/sign-in", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, password }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? "api-error");
-    return { ok: true };
+    if (!res.ok) return { ok: false, error: data.error ?? "Incorrect email or password." };
+    return { ok: true, ...data };
   } catch {
-    // API not available — use client-side fallback for local demo
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-    _otpStore[email] = { code, expires: Date.now() + 10 * 60 * 1000 };
-    console.info(`[DEMO] OTP for ${email}: ${code}`);
-    return { ok: true, _demoCode: code };
+    return { ok: false, error: "Network error. Check your connection." };
   }
 }
 
-async function confirmOtp(email: string, otp: string): Promise<{ ok: boolean; error?: string }> {
+async function changePassword(accessToken: string, newPassword: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch("/api/verify-otp", {
+    const res = await fetch("/api/change-password", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, otp }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ new_password: newPassword }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? "api-error");
+    if (!res.ok) return { ok: false, error: data.error ?? "Failed to update password." };
     return { ok: true };
   } catch {
-    // Fallback: check client-side store
-    const entry = _otpStore[email];
-    if (!entry) return { ok: false, error: "OTP not found. Please request a new one." };
-    if (Date.now() > entry.expires) { delete _otpStore[email]; return { ok: false, error: "OTP expired. Please request a new one." }; }
-    if (entry.code !== otp.trim()) return { ok: false, error: "Incorrect OTP. Try again." };
-    delete _otpStore[email];
-    return { ok: true };
+    return { ok: false, error: "Network error." };
   }
 }
 
@@ -213,59 +203,34 @@ const initials = (name: string) => name.split(" ").map((p) => p[0]).slice(0, 2).
 // Login
 // ─────────────────────────────────────────────────────────────────
 function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNullable<Session>) => void }) {
-  type Step = "email" | "otp";
-  const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
-  const [otp, setOtp] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const submitEmail = async (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
     const em = email.trim().toLowerCase();
-    if (!em) { setError("Enter your email address."); return; }
+    if (!em || !password) { setError("Enter your email and password."); return; }
 
     setLoading(true);
-    const result = await requestOtp(em);
+    const result = await signIn(em, password);
     setLoading(false);
 
     if (!result.ok) {
-      setError(result.error ?? "Failed to send sign-in link.");
+      setError(result.error ?? "Incorrect email or password.");
       return;
     }
-    setStep("otp");
-  };
 
-  const submitOtp = async (e: FormEvent) => {
-    e.preventDefault();
-    setError("");
-    const em = email.trim().toLowerCase();
-    setLoading(true);
-    const result = await confirmOtp(em, otp);
-    setLoading(false);
-
-    if (result.ok) {
-      // Role determined server-side — check if admin first, then student
-      const adminUser = state.adminUsers.find((a) => a.email.toLowerCase() === em);
-      if (adminUser) {
-        onLogin({ role: "admin", email: em });
-      } else {
-        const student = state.students.find((s) => s.email.toLowerCase() === em);
-        onLogin({ role: "student", studentId: student?.id, email: em });
-      }
-    } else {
-      setError(result.error ?? "Incorrect OTP. Try again.");
-    }
-  };
-
-  const resendOtp = async () => {
-    setError("");
-    setOtp("");
-    setLoading(true);
-    const result = await requestOtp(email.trim().toLowerCase());
-    setLoading(false);
-    if (!result.ok) setError(result.error ?? "Failed to resend OTP.");
+    // Find student record for studentId
+    const student = state.students.find((s) => s.email.toLowerCase() === em);
+    onLogin({
+      role:        result.role as "admin" | "student",
+      email:       em,
+      studentId:   result.role === "student" ? student?.id : undefined,
+      accessToken: result.access_token,
+    });
   };
 
   return (
@@ -282,73 +247,37 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
         </div>
 
         <Card className="p-8">
-          {step === "email" ? (
-            <>
-              <h1 className="font-display text-2xl font-bold text-[#0b1825] mb-1">Sign in</h1>
-              <p className="text-sm text-[#71818a] mb-6">
-                Enter your NCU email address to continue.
+          <h1 className="font-display text-2xl font-bold text-[#0b1825] mb-1">Sign in</h1>
+          <p className="text-sm text-[#71818a] mb-6">Use your NCU email and password.</p>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <Input
+              label="Email address"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="23csu173@ncuindia.edu"
+              autoFocus
+            />
+            <div>
+              <label className="block text-sm font-medium text-[#0b1825] mb-1.5">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Default: rollnumber@1234"
+                className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-4 py-2.5 text-sm outline-none focus:border-[#0b1825] focus:ring-2 focus:ring-[#0b1825]/10 transition"
+              />
+              <p className="text-xs text-[#71818a] mt-1">Default password is your roll number followed by @1234</p>
+            </div>
+            {error && (
+              <p className="text-sm text-red-600 flex items-center gap-1.5">
+                <AlertTriangle size={13} />{error}
               </p>
-              <form onSubmit={submitEmail} className="space-y-4">
-                <Input
-                  label="Email address"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="Enter your NCU email"
-                  autoFocus
-                />
-                {error && (
-                  <p className="text-sm text-red-600 flex items-center gap-1.5">
-                    <AlertTriangle size={13} />{error}
-                  </p>
-                )}
-                <Btn type="submit" className="w-full" disabled={loading}>
-                  {loading ? "Sending OTP…" : "Continue"}
-                </Btn>
-              </form>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={() => { setStep("email"); setOtp(""); setError(""); }}
-                className="flex items-center gap-1.5 text-xs text-[#71818a] hover:text-[#0b1825] mb-5 transition"
-              >
-                <ChevronRight size={12} className="rotate-180" /> Change email
-              </button>
-              <div className="flex items-center gap-3 mb-6">
-                <div className="h-10 w-10 rounded-xl bg-[#f0f2e4] flex items-center justify-center shrink-0">
-                  <Mail size={18} className="text-[#0b1825]" />
-                </div>
-                <div>
-                  <h1 className="font-display text-xl font-bold text-[#0b1825]">Check your inbox</h1>
-                  <p className="text-xs text-[#71818a] mt-0.5">
-                    A sign-in link was sent to <strong>{email}</strong>
-                  </p>
-                </div>
-              </div>
-
-              <div className="rounded-xl bg-[#f9faf3] border border-[#eef0e4] px-4 py-4 text-sm text-[#71818a] text-center">
-                Click the link in your email to sign in. The link expires in 10 minutes and can only be used once.
-              </div>
-
-              {error && (
-                <p className="mt-3 text-sm text-red-600 flex items-center gap-1.5">
-                  <AlertTriangle size={13} />{error}
-                </p>
-              )}
-
-              <p className="mt-4 text-center text-xs text-[#71818a]">
-                Didn't receive it?{" "}
-                <button
-                  onClick={resendOtp}
-                  disabled={loading}
-                  className="underline hover:text-[#0b1825] disabled:opacity-40"
-                >
-                  Resend link
-                </button>
-              </p>
-            </>
-          )}
+            )}
+            <Btn type="submit" className="w-full" disabled={loading}>
+              {loading ? "Signing in…" : "Sign in"}
+            </Btn>
+          </form>
         </Card>
 
         <p className="mt-4 text-center text-xs text-[#71818a]">
@@ -385,13 +314,15 @@ function AppShell({ session, state, adminPage, studentPage, setAdminPage, setStu
     { id: "students",        label: "All students",        icon: Users,    dividerBefore: true },
     { id: "student-list",    label: "Student list",        icon: UserCog },
     { id: "admin-access",    label: "Admin access",        icon: Shield },
+    { id: "change-password", label: "Change password",     icon: KeyRound, dividerBefore: true },
   ];
 
   const studentNav: { id: StudentPage; label: string; icon: React.ElementType }[] = [
-    { id: "dashboard",      label: "Dashboard",            icon: LayoutDashboard },
-    { id: "spec-selection", label: "Pick specialization",  icon: Sparkles },
-    { id: "section-seat",   label: "Pick section & seat",  icon: GraduationCap },
-    { id: "swaps",          label: "Swap requests",        icon: ArrowLeftRight },
+    { id: "dashboard",       label: "Dashboard",            icon: LayoutDashboard },
+    { id: "spec-selection",  label: "Pick specialization",  icon: Sparkles },
+    { id: "section-seat",    label: "Pick section & seat",  icon: GraduationCap },
+    { id: "swaps",           label: "Swap requests",        icon: ArrowLeftRight },
+    { id: "change-password", label: "Change password",      icon: KeyRound },
   ];
 
   const pageTitle = isAdmin
@@ -2263,6 +2194,75 @@ function StudentSwapRequests({ me, state, showToast, setState }: {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// CHANGE PASSWORD — shared for student and admin
+// ─────────────────────────────────────────────────────────────────
+function ChangePasswordPage({ session, showToast }: {
+  session: NonNullable<Session>;
+  showToast: (m: string, err?: boolean) => void;
+}) {
+  const [current, setCurrent] = useState("");
+  const [newPass, setNewPass] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (!current || !newPass || !confirm) { setError("All fields are required."); return; }
+    if (newPass.length < 6) { setError("New password must be at least 6 characters."); return; }
+    if (newPass !== confirm) { setError("Passwords do not match."); return; }
+    if (!session.accessToken) { setError("Session expired. Please sign in again."); return; }
+
+    setLoading(true);
+    const result = await changePassword(session.accessToken, newPass);
+    setLoading(false);
+
+    if (result.ok) {
+      showToast("Password updated successfully.");
+      setCurrent(""); setNewPass(""); setConfirm("");
+    } else {
+      setError(result.error ?? "Failed to update password.");
+    }
+  };
+
+  return (
+    <div className="max-w-md space-y-4">
+      <div>
+        <h2 className="font-display text-xl font-bold text-[#0b1825]">Change password</h2>
+        <p className="text-sm text-[#71818a] mt-1">Update your account password.</p>
+      </div>
+      <Card className="p-6">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-[#0b1825] mb-1.5">Current password</label>
+            <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)}
+              placeholder="Your current password"
+              className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-4 py-2.5 text-sm outline-none focus:border-[#0b1825] focus:ring-2 focus:ring-[#0b1825]/10 transition" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-[#0b1825] mb-1.5">New password</label>
+            <input type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)}
+              placeholder="At least 6 characters"
+              className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-4 py-2.5 text-sm outline-none focus:border-[#0b1825] focus:ring-2 focus:ring-[#0b1825]/10 transition" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-[#0b1825] mb-1.5">Confirm new password</label>
+            <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
+              placeholder="Repeat new password"
+              className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-4 py-2.5 text-sm outline-none focus:border-[#0b1825] focus:ring-2 focus:ring-[#0b1825]/10 transition" />
+          </div>
+          {error && <p className="text-sm text-red-600 flex items-center gap-1.5"><AlertTriangle size={13} />{error}</p>}
+          <Btn type="submit" disabled={loading} className="w-full">
+            <KeyRound size={14} /> {loading ? "Updating…" : "Update password"}
+          </Btn>
+        </form>
+      </Card>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Root
 // ─────────────────────────────────────────────────────────────────
 export default function Index() {
@@ -2303,6 +2303,7 @@ export default function Index() {
             {adminPage === "students"        && <AdminStudents state={state} />}
             {adminPage === "student-list"    && <AdminStudentList state={state} showToast={showToast} setState={setState} />}
             {adminPage === "admin-access"    && <AdminAccessManagement state={state} showToast={showToast} setState={setState} currentEmail={session.email} />}
+            {adminPage === "change-password" && <ChangePasswordPage session={session} showToast={showToast} />}
           </>
         )}
         {!isAdmin && liveMe && (
@@ -2311,6 +2312,7 @@ export default function Index() {
             {studentPage === "spec-selection" && <StudentSpecSelection me={liveMe} state={state} showToast={showToast} setState={setState} />}
             {studentPage === "section-seat"   && <StudentSectionSeat me={liveMe} state={state} showToast={showToast} setState={setState} />}
             {studentPage === "swaps"          && <StudentSwapRequests me={liveMe} state={state} showToast={showToast} setState={setState} />}
+            {studentPage === "change-password" && <ChangePasswordPage session={session} showToast={showToast} />}
           </>
         )}
       </AppShell>
