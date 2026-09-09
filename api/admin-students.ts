@@ -116,13 +116,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // ── POST bulk (body has students array) ───────────────────────
   if (req.method === "POST" && Array.isArray(req.body?.students)) {
     const rows: Record<string, unknown>[] = req.body.students;
+    const replaceAll: boolean = req.body.replace === true;
     if (rows.length === 0) return res.status(400).json({ error: "students array is required." });
 
     const clean = rows.map((r) => pickInsert(r)).filter((r) => r.email && r.name && r.roll_number);
     if (clean.length === 0) return res.status(400).json({ error: "No valid student rows found." });
 
+    // If replace mode — delete all existing students first
+    if (replaceAll) {
+      await admin.from("students").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    }
+
     const { data, error } = await admin.from("students")
-      .upsert(clean as any, { onConflict: "email", ignoreDuplicates: true })
+      .upsert(clean as any, { onConflict: "email", ignoreDuplicates: !replaceAll })
       .select("id, email, roll_number");
     if (error) return res.status(500).json({ error: safeError(error) });
 

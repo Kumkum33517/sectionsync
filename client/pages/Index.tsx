@@ -1334,7 +1334,7 @@ function AdminStudentList({ state, showToast, setState, session }: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ students: apiRows }),
+        body: JSON.stringify({ students: apiRows, replace: uploadMode === "replace" }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -2359,7 +2359,37 @@ export default function Index() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  if (!session) return <LoginScreen state={state} onLogin={(s) => setSession(s)} />;
+  const handleLogin = async (s: NonNullable<Session>) => {
+    setSession(s);
+    // If student — load their record from Supabase so dashboard shows correctly
+    if (s.role === "student") {
+      try {
+        const { supabase } = await import("@/lib/supabase");
+        const { data } = await supabase
+          .from("students")
+          .select("id, roll_number, name, email, year, chosen_specialization_id, assigned_section_id, assigned_seat, group_number")
+          .eq("email", s.email.toLowerCase())
+          .maybeSingle();
+        if (data) {
+          const student: Student = {
+            id:                   data.id,
+            rollNumber:           data.roll_number,
+            name:                 data.name,
+            email:                data.email,
+            chosenSpecialization: data.chosen_specialization_id ?? null,
+            assignedSectionId:    data.assigned_section_id ?? null,
+            assignedSeat:         data.assigned_seat ?? null,
+            group:                data.group_number ?? null,
+          };
+          setState((p) => ({ ...p, students: [student] }));
+          // Update session with the correct studentId
+          setSession({ ...s, studentId: data.id });
+        }
+      } catch { /* ignore — dashboard will show empty state */ }
+    }
+  };
+
+  if (!session) return <LoginScreen state={state} onLogin={handleLogin} />;
 
   const isAdmin = session.role === "admin";
   const liveMe  = session.studentId ? state.students.find((s) => s.id === session.studentId) ?? null : null;
