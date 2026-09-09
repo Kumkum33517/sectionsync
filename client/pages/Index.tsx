@@ -255,7 +255,7 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="23csu173@ncuindia.edu"
+              placeholder=""
               autoFocus
             />
             <div>
