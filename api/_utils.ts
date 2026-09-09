@@ -9,14 +9,12 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
-// Create admin client inline — avoids cross-bundle import issues on Vercel
-function getAdminClient() {
-  const url = process.env.VITE_SUPABASE_URL ?? "";
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-  return createClient(url, key, {
-    auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
-  });
-}
+// Admin Supabase client — defined inline to avoid cross-bundle import issues
+const _adminUrl = process.env.VITE_SUPABASE_URL ?? "";
+const _adminKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+const adminClient = createClient(_adminUrl, _adminKey, {
+  auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+});
 
 // ─────────────────────────────────────────────────────────────────
 // Error sanitization
@@ -71,7 +69,7 @@ export async function checkRateLimit(opts: RateLimitOptions): Promise<{ limited:
 
   if (email) {
     checks.push(
-      adminSupabase
+      adminClient
         .from("rate_limit_log")
         .select("id", { count: "exact", head: true })
         .eq("email", email.toLowerCase())
@@ -82,7 +80,7 @@ export async function checkRateLimit(opts: RateLimitOptions): Promise<{ limited:
   }
 
   checks.push(
-    adminSupabase
+    adminClient
       .from("rate_limit_log")
       .select("id", { count: "exact", head: true })
       .eq("ip", ip)
@@ -102,7 +100,7 @@ export async function checkRateLimit(opts: RateLimitOptions): Promise<{ limited:
   }
 
   // Log the attempt to the general rate limit table (no action CHECK constraint here)
-  await getAdminClient().from("rate_limit_log").insert({
+  await adminClient.from("rate_limit_log").insert({
     email: email ?? "unknown",
     ip,
     action,
@@ -138,7 +136,7 @@ export async function verifyAdmin(
   const { data: { user }, error } = await userSupabase.auth.getUser();
   if (error || !user?.email) return { error: "Invalid or expired session." };
 
-  const { data: adminRow } = await adminSupabase
+  const { data: adminRow } = await adminClient
     .from("admins")
     .select("id")
     .eq("email", user.email.toLowerCase())
