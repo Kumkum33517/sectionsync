@@ -32,7 +32,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     process.env.VITE_SUPABASE_ANON_KEY!
   );
 
-  const { data, error } = await anonClient.auth.signInWithPassword({ email: em, password });
+  const { data, error } = await (anonClient.auth as any).signInWithPassword({ email: em, password });
 
   if (error || !data.session) {
     return res.status(401).json({ error: "Incorrect email or password." });

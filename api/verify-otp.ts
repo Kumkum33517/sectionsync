@@ -50,7 +50,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     process.env.VITE_SUPABASE_ANON_KEY!
   );
 
-  const { data, error } = await anonClient.auth.verifyOtp({
+  const { data, error } = await (anonClient.auth as any).verifyOtp({
     email: em,
     token: code,    // "token" here is Supabase's internal param name for the 6-digit code
     type:  "email", // must match the type used in signInWithOtp
