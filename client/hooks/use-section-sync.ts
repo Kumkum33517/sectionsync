@@ -223,7 +223,7 @@ export function useAdminBulkImportStudents() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (students: { name: string; roll_number: string; email: string; year?: number }[]) => {
-      await apiFetch("/api/admin-students/bulk", {
+      await apiFetch("/api/admin-students", {
         method: "POST",
         body: JSON.stringify({ students }),
       });

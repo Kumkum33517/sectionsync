@@ -46,7 +46,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // ── POST single ──────────────────────────────────────────────────
-  if (req.method === "POST" && !req.url?.includes("bulk")) {
+  if (req.method === "POST" && !req.body?.students) {
     const fields = pickInsert(req.body ?? {});
     if (!fields.email || !fields.name || !fields.roll_number) {
       return res.status(400).json({ error: "name, email, and roll_number are required." });
@@ -74,7 +74,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // ── POST bulk ────────────────────────────────────────────────────
-  if (req.method === "POST" && req.url?.includes("bulk")) {
+  if (req.method === "POST" && req.body?.students) {
     const rows: Record<string, unknown>[] = req.body?.students ?? [];
     if (!Array.isArray(rows) || rows.length === 0) {
       return res.status(400).json({ error: "students array is required." });

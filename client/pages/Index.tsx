@@ -1328,7 +1328,7 @@ function AdminStudentList({ state, showToast, setState, session }: {
         roll_number: s.rollNumber,
         email: s.email,
       }));
-      const res = await fetch("/api/admin-students/bulk", {
+      const res = await fetch("/api/admin-students", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
