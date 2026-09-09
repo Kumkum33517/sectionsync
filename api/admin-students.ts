@@ -122,13 +122,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const clean = rows.map((r) => pickInsert(r)).filter((r) => r.email && r.name && r.roll_number);
     if (clean.length === 0) return res.status(400).json({ error: "No valid student rows found." });
 
-    // If replace mode — use RPC function that handles FK constraints safely
+    // If replace mode — delete directly using admin client (service_role bypasses RLS)
     if (replaceAll) {
-      const { error: clearErr } = await admin.rpc("clear_all_students");
-      if (clearErr) {
-        console.error("[replace] clear failed:", clearErr.message);
-        return res.status(500).json({ error: "Failed to clear existing students." });
-      }
+      // First nullify all FK references so delete succeeds
+      await admin.from("students").update({
+        auth_id: null,
+        chosen_specialization_id: null,
+        assigned_section_id: null,
+        assigned_seat: null,
+        group_number: null,
+      }).not("id", "is", null);
+      // Now delete all rows
+      await admin.from("students").delete().not("id", "is", null);
     }
 
     const { data, error } = await admin.from("students")

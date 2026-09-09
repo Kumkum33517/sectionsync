@@ -2441,8 +2441,14 @@ export default function Index() {
   const handleLogin = async (s: NonNullable<Session>) => {
     if (s.role === "student") {
       try {
-        const { supabase } = await import("@/lib/supabase");
-        const { data } = await supabase
+        const { createClient } = await import("@supabase/supabase-js");
+        // Use the user's own access token so RLS allows them to read their row
+        const userClient = createClient(
+          import.meta.env.VITE_SUPABASE_URL as string,
+          import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+          { global: { headers: { Authorization: `Bearer ${s.accessToken}` } } }
+        );
+        const { data } = await userClient
           .from("students")
           .select("id, roll_number, name, email, year, chosen_specialization_id, assigned_section_id, assigned_seat, group_number")
           .eq("email", s.email.toLowerCase())
@@ -2458,12 +2464,12 @@ export default function Index() {
             assignedSeat:         data.assigned_seat ?? null,
             group:                data.group_number ?? null,
           };
-          // Set student in state BEFORE setting session so liveMe resolves immediately
+          // Put student in state BEFORE setting session so liveMe resolves on first render
           setState((p) => ({ ...p, students: [student] }));
           setSession({ ...s, studentId: data.id });
           return;
         }
-      } catch { /* fall through */ }
+      } catch { /* fall through to set session without student data */ }
     }
     setSession(s);
   };
