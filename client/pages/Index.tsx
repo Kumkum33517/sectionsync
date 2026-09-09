@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 import {
   AlertTriangle,
@@ -2353,6 +2353,39 @@ export default function Index() {
   const [adminPage, setAdminPage]   = useState<AdminPage>("dashboard");
   const [studentPage, setStudentPage] = useState<StudentPage>("dashboard");
   const [toast, setToast]           = useState<Toast>(null);
+
+  // Load specializations and system config from Supabase on startup
+  useEffect(() => {
+    import("@/lib/supabase").then(({ supabase }) => {
+      // Load specializations
+      supabase.from("specializations").select("*").order("name").then(({ data }) => {
+        if (data && data.length > 0) {
+          const specs: SpecializationDef[] = data.map((s: any) => ({
+            id:          s.id,
+            name:        s.name,
+            batch:       s.batch ?? "2024-25",
+            active:      s.active ?? true,
+            description: s.description ?? undefined,
+            createdAt:   s.created_at,
+          }));
+          setState((p) => ({ ...p, specializations: specs }));
+        }
+      });
+
+      // Load system config (phase + window status)
+      supabase.from("system_config").select("*").eq("id", 1).single().then(({ data }) => {
+        if (data) {
+          setState((p) => ({
+            ...p,
+            phase:                data.phase,
+            specWindowStatus:     data.spec_window_open ? "OPEN" : "CLOSED",
+            sectionWindowStatus:  data.section_window_open ? "OPEN" : "CLOSED",
+            sectionWindowDeadline: data.section_window_deadline ?? null,
+          }));
+        }
+      });
+    });
+  }, []);
 
   const showToast = (message: string, error = false) => {
     setToast({ message, error });
