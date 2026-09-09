@@ -213,23 +213,7 @@ const _lastNames = [
 ];
 
 export function createStudents(): Student[] {
-  return Array.from({ length: 120 }, (_, i) => {
-    const n = i + 1;
-    const roll = `22CSU${String(n).padStart(3, "0")}`;
-    const name = i === 0
-      ? "Kumkum Singh"
-      : `${_firstNames[n % _firstNames.length]} ${_lastNames[Math.floor(n / _firstNames.length) % _lastNames.length]}`;
-    return {
-      id: `student-${n}`,
-      rollNumber: roll,
-      name,
-      email: `${roll.toLowerCase()}@ncuindia.edu`,
-      chosenSpecialization: null,
-      assignedSectionId: null,
-      assignedSeat: null,
-      group: null,
-    };
-  });
+  return [];
 }
 
 /** Hardcoded authorized admins — only these two emails can log in as admin */

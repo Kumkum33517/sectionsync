@@ -1309,12 +1309,24 @@ function AdminStudentList({ state, showToast, setState, session }: {
     if (!uploadPreview) return;
     const { rows } = uploadPreview;
 
-    // Determine which rows are actually new
     const toSave = uploadMode === "replace"
       ? rows
       : rows.filter((n) => !state.students.some((e) => e.email === n.email));
 
-    // Save to Supabase first
+    // Get fresh token from Supabase session
+    const { createClient } = await import("@supabase/supabase-js");
+    const sb = createClient(
+      import.meta.env.VITE_SUPABASE_URL as string,
+      import.meta.env.VITE_SUPABASE_ANON_KEY as string
+    );
+    const { data: { session: sbSession } } = await sb.auth.getSession();
+    const token = sbSession?.access_token ?? session.accessToken ?? "";
+
+    if (!token) {
+      showToast("Session expired. Please sign in again.", true);
+      return;
+    }
+
     try {
       const apiRows = toSave.map((s) => ({
         name: s.name,
@@ -1325,7 +1337,7 @@ function AdminStudentList({ state, showToast, setState, session }: {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.accessToken ?? ""}`,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ students: apiRows }),
       });
@@ -1334,13 +1346,12 @@ function AdminStudentList({ state, showToast, setState, session }: {
         showToast(data.error ?? "Failed to save students.", true);
         return;
       }
-      showToast(`Saved ${data.inserted ?? toSave.length} students to database. Auth accounts created.`);
+      showToast(`Saved ${data.inserted ?? toSave.length} students. Auth accounts created with default password.`);
     } catch {
       showToast("Network error saving students.", true);
       return;
     }
 
-    // Update local state to reflect the change
     if (uploadMode === "replace") {
       setState((p) => ({ ...p, students: rows }));
     } else {
