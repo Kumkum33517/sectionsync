@@ -556,7 +556,7 @@ function AdminSpecializations({ state, showToast, setState }: {
     setFormErr(""); setEditId(spec.id); setShowForm(true);
   };
 
-  const save = () => {
+  const save = async () => {
     setFormErr("");
     if (!form.name.trim()) { setFormErr("Specialization name is required."); return; }
     if (!form.batch.trim()) { setFormErr("Batch / academic year is required."); return; }
@@ -565,22 +565,31 @@ function AdminSpecializations({ state, showToast, setState }: {
     );
     if (dup) { setFormErr("A specialization with this name already exists."); return; }
 
+    const { supabase } = await import("@/lib/supabase");
+
     if (editId) {
+      const { error } = await supabase.from("specializations").update({
+        name: form.name.trim(), batch: form.batch.trim(),
+        description: form.description.trim() || null, active: form.active,
+      }).eq("id", editId);
+      if (error) { setFormErr("Failed to update. Try again."); return; }
       setState((p) => ({
         ...p,
         specializations: p.specializations.map((s) =>
-          s.id === editId ? { ...s, name: form.name.trim(), batch: form.batch.trim(), description: form.description.trim(), active: form.active } : s
+          s.id === editId ? { ...s, name: form.name.trim(), batch: form.batch.trim(), description: form.description.trim() || undefined, active: form.active } : s
         ),
       }));
       showToast("Specialization updated.");
     } else {
+      const { data, error } = await supabase.from("specializations").insert({
+        name: form.name.trim(), batch: form.batch.trim(),
+        description: form.description.trim() || null, active: form.active,
+      }).select("id, name, batch, description, active, created_at").single();
+      if (error) { setFormErr("Failed to save. Try again."); return; }
       const newSpec: SpecializationDef = {
-        id: `spec-${Date.now()}`,
-        name: form.name.trim(),
-        batch: form.batch.trim(),
-        description: form.description.trim() || undefined,
-        active: form.active,
-        createdAt: new Date().toISOString(),
+        id: data.id, name: data.name, batch: data.batch,
+        description: data.description ?? undefined, active: data.active,
+        createdAt: data.created_at,
       };
       setState((p) => ({ ...p, specializations: [...p.specializations, newSpec] }));
       showToast(`"${newSpec.name}" added.`);
@@ -588,14 +597,22 @@ function AdminSpecializations({ state, showToast, setState }: {
     setShowForm(false);
   };
 
-  const remove = (id: string, name: string) => {
+  const remove = async (id: string, name: string) => {
     const inUse = state.students.some((s) => s.chosenSpecialization === name);
     if (inUse) { showToast(`Cannot remove "${name}" — students have already selected it.`, true); return; }
+    const { supabase } = await import("@/lib/supabase");
+    const { error } = await supabase.from("specializations").delete().eq("id", id);
+    if (error) { showToast("Failed to delete. Try again.", true); return; }
     setState((p) => ({ ...p, specializations: p.specializations.filter((s) => s.id !== id) }));
     showToast(`"${name}" removed.`);
   };
 
-  const toggle = (id: string) => {
+  const toggle = async (id: string) => {
+    const spec = state.specializations.find((s) => s.id === id);
+    if (!spec) return;
+    const { supabase } = await import("@/lib/supabase");
+    const { error } = await supabase.from("specializations").update({ active: !spec.active }).eq("id", id);
+    if (error) { showToast("Failed to update. Try again.", true); return; }
     setState((p) => ({
       ...p,
       specializations: p.specializations.map((s) => s.id === id ? { ...s, active: !s.active } : s),
@@ -674,8 +691,7 @@ function AdminSpecializations({ state, showToast, setState }: {
                   {spec.description && <p className="text-xs text-[#71818a] mt-1">{spec.description}</p>}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <button onClick={() => toggle(spec.id)}
-                    title={spec.active ? "Deactivate" : "Activate"}
+                  <button onClick={() => toggle(spec.id)}                    title={spec.active ? "Deactivate" : "Activate"}
                     className="text-[#71818a] hover:text-[#0b1825] transition">
                     {spec.active ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
                   </button>
@@ -2423,8 +2439,6 @@ export default function Index() {
   };
 
   const handleLogin = async (s: NonNullable<Session>) => {
-    setSession(s);
-    // If student — load their record from Supabase so dashboard shows correctly
     if (s.role === "student") {
       try {
         const { supabase } = await import("@/lib/supabase");
@@ -2444,12 +2458,14 @@ export default function Index() {
             assignedSeat:         data.assigned_seat ?? null,
             group:                data.group_number ?? null,
           };
+          // Set student in state BEFORE setting session so liveMe resolves immediately
           setState((p) => ({ ...p, students: [student] }));
-          // Update session with the correct studentId
           setSession({ ...s, studentId: data.id });
+          return;
         }
-      } catch { /* ignore — dashboard will show empty state */ }
+      } catch { /* fall through */ }
     }
+    setSession(s);
   };
 
   if (!session) return <LoginScreen state={state} onLogin={handleLogin} />;
