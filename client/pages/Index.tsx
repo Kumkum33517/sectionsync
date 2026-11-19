@@ -1357,9 +1357,9 @@ function AdminStudentList({ state, showToast, setState, session }: {
       ? rows
       : rows.filter((n) => !state.students.some((e) => e.email === n.email));
 
-    // Get fresh token from Supabase session
-    const { data: { session: sbSession } } = await (await import("@/lib/supabase")).supabase.auth.getSession();
-    const token = sbSession?.access_token ?? session.accessToken ?? "";
+    // Use session.accessToken directly — getSession() may return null
+    // if login went through our custom /api/sign-in route
+    const token = session.accessToken ?? "";
 
     if (!token) {
       showToast("Session expired. Please sign in again.", true);

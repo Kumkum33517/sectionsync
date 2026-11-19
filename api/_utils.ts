@@ -133,6 +133,7 @@ export async function verifyAdmin(
     { global: { headers: { Authorization: `Bearer ${token}` } } }
   );
 
+  // @ts-ignore — TS5 type compat
   const { data: { user }, error } = await userSupabase.auth.getUser();
   if (error || !user?.email) return { error: "Invalid or expired session." };
 

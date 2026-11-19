@@ -33,6 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     { global: { headers: { Authorization: `Bearer ${token}` } } }
   );
 
+  // @ts-ignore — TS5 type compat
   const { error } = await userClient.auth.updateUser({ password: new_password });
   if (error) return res.status(400).json({ error: "Failed to update password. Please try again." });
 
