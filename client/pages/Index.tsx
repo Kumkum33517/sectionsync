@@ -1,3 +1,5 @@
+import { supabase } from "@/lib/supabase";
+import { createClient } from "@supabase/supabase-js";
 import { FormEvent, useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 import {
@@ -87,7 +89,6 @@ async function signIn(email: string, password: string): Promise<{
     // Step 2: set the Supabase session using the tokens from our API
     // This makes the anon client usable for RLS-protected operations (specs, etc.)
     // AND persists the session in localStorage so refresh doesn't log you out
-    const { supabase } = await import("@/lib/supabase");
     if (data.access_token && data.refresh_token) {
       await supabase.auth.setSession({
         access_token: data.access_token,
@@ -102,7 +103,6 @@ async function signIn(email: string, password: string): Promise<{
 }
 
 async function changePassword(newPassword: string): Promise<{ ok: boolean; error?: string }> {
-  const { supabase } = await import("@/lib/supabase");
   const { error } = await supabase.auth.updateUser({ password: newPassword });
   if (error) return { ok: false, error: "Failed to update password. Please try again." };
   return { ok: true };
@@ -571,7 +571,6 @@ function AdminSpecializations({ state, showToast, setState }: {
     );
     if (dup) { setFormErr("A specialization with this name already exists."); return; }
 
-    const { supabase } = await import("@/lib/supabase");
 
     if (editId) {
       const { error } = await supabase.from("specializations").update({
@@ -606,7 +605,6 @@ function AdminSpecializations({ state, showToast, setState }: {
   const remove = async (id: string, name: string) => {
     const inUse = state.students.some((s) => s.chosenSpecialization === name);
     if (inUse) { showToast(`Cannot remove "${name}" — students have already selected it.`, true); return; }
-    const { supabase } = await import("@/lib/supabase");
     const { error } = await supabase.from("specializations").delete().eq("id", id);
     if (error) { showToast("Failed to delete. Try again.", true); return; }
     setState((p) => ({ ...p, specializations: p.specializations.filter((s) => s.id !== id) }));
@@ -616,7 +614,6 @@ function AdminSpecializations({ state, showToast, setState }: {
   const toggle = async (id: string) => {
     const spec = state.specializations.find((s) => s.id === id);
     if (!spec) return;
-    const { supabase } = await import("@/lib/supabase");
     const { error } = await supabase.from("specializations").update({ active: !spec.active }).eq("id", id);
     if (error) { showToast("Failed to update. Try again.", true); return; }
     setState((p) => ({
@@ -1411,7 +1408,6 @@ function AdminStudentList({ state, showToast, setState, session }: {
     // accessToken is cached on the session object at sign-in and on refresh
     // restore; fall back to getSession() as a safety net.
     if (session.accessToken) return session.accessToken;
-    const { supabase } = await import("@/lib/supabase");
     const { data: { session: s } } = await supabase.auth.getSession();
     return s?.access_token ?? "";
   };
@@ -2412,7 +2408,7 @@ export default function Index() {
   // Load specializations and system config from Supabase on startup
   useEffect(() => {
     // First check if Supabase has a persisted session (handles page refresh)
-    import("@/lib/supabase").then(({ supabase }) => {
+    (async () => {
       supabase.auth.getSession().then(async ({ data: { session: sbSession } }) => {
         if (sbSession && !session) {
           const em = sbSession.user.email?.toLowerCase() ?? "";
@@ -2454,7 +2450,7 @@ export default function Index() {
           }));
         }
       });
-    });
+    })();
   }, []);
 
   const showToast = (message: string, error = false) => {
@@ -2465,7 +2461,6 @@ export default function Index() {
   const handleLogin = async (s: NonNullable<Session>) => {
     if (s.role === "student") {
       try {
-        const { createClient } = await import("@supabase/supabase-js");
         // Use the user's own access token so RLS allows them to read their row
         const userClient = createClient(
           import.meta.env.VITE_SUPABASE_URL as string,

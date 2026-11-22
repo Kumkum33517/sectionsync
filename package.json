@@ -1,5 +1,6 @@
 {
   "name": "sectionsync",
+  "type": "module",
   "private": true,
   "scripts": {
     "dev": "vite",
