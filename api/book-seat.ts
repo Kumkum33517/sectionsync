@@ -22,6 +22,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     process.env.VITE_SUPABASE_ANON_KEY!,
     { global: { headers: { Authorization: `Bearer ${token}` } } }
   );
+  // @ts-ignore — TS5 type compat
   const { data: { user }, error: authErr } = await userSupabase.auth.getUser();
   if (authErr || !user) return res.status(401).json({ error: "Invalid or expired session." });
 

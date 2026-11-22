@@ -18,6 +18,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const userClient = createClient(url!, anonKey!, {
       global: { headers: { Authorization: `Bearer ${token}` } }
     });
+    // @ts-ignore — TS5 type compat
     const { data: ud, error: ue } = await userClient.auth.getUser();
     getUserResult = ue ? `ERROR: ${ue.message}` : `OK: ${ud.user?.email}`;
   }

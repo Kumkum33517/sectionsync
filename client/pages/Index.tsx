@@ -84,10 +84,16 @@ async function signIn(email: string, password: string): Promise<{
     const data = await res.json();
     if (!res.ok) return { ok: false, error: data.error ?? "Incorrect email or password." };
 
-    // Step 2: also sign in via Supabase client so the session is established
-    // locally — this makes getSession() work for subsequent API calls
+    // Step 2: set the Supabase session using the tokens from our API
+    // This makes the anon client usable for RLS-protected operations (specs, etc.)
+    // AND persists the session in localStorage so refresh doesn't log you out
     const { supabase } = await import("@/lib/supabase");
-    await supabase.auth.signInWithPassword({ email, password });
+    if (data.access_token && data.refresh_token) {
+      await supabase.auth.setSession({
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+      });
+    }
 
     return { ok: true, ...data };
   } catch {
@@ -1357,8 +1363,8 @@ function AdminStudentList({ state, showToast, setState, session }: {
       ? rows
       : rows.filter((n) => !state.students.some((e) => e.email === n.email));
 
-    // Use session.accessToken directly — getSession() may return null
-    // if login went through our custom /api/sign-in route
+    // accessToken is cached on the session object at sign-in (and restored
+    // on refresh), since signIn() persists the session via supabase.auth.setSession
     const token = session.accessToken ?? "";
 
     if (!token) {
@@ -1402,8 +1408,8 @@ function AdminStudentList({ state, showToast, setState, session }: {
   };
 
   const getToken = async () => {
-    // Use the session access token directly — more reliable than getSession()
-    // which may not be set if login went through our custom API route
+    // accessToken is cached on the session object at sign-in and on refresh
+    // restore; fall back to getSession() as a safety net.
     if (session.accessToken) return session.accessToken;
     const { supabase } = await import("@/lib/supabase");
     const { data: { session: s } } = await supabase.auth.getSession();
@@ -2405,7 +2411,22 @@ export default function Index() {
 
   // Load specializations and system config from Supabase on startup
   useEffect(() => {
+    // First check if Supabase has a persisted session (handles page refresh)
     import("@/lib/supabase").then(({ supabase }) => {
+      supabase.auth.getSession().then(async ({ data: { session: sbSession } }) => {
+        if (sbSession && !session) {
+          const em = sbSession.user.email?.toLowerCase() ?? "";
+          // Check role by querying admins table with the restored session
+          const { data: adminRow } = await supabase.from("admins").select("id").eq("email", em).maybeSingle();
+          const role = adminRow ? "admin" : "student";
+          if (role === "student") {
+            await handleLogin({ role: "student", email: em, accessToken: sbSession.access_token });
+          } else {
+            setSession({ role: "admin", email: em, accessToken: sbSession.access_token });
+          }
+        }
+      });
+
       // Load specializations
       supabase.from("specializations").select("*").order("name").then(({ data }) => {
         if (data && data.length > 0) {

@@ -65,7 +65,7 @@ export async function checkRateLimit(opts: RateLimitOptions): Promise<{ limited:
 
   const since = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
 
-  const checks: Promise<{ count: number | null }>[] = [];
+  const checks: Array<PromiseLike<{ count: number | null }>> = [];
 
   if (email) {
     checks.push(

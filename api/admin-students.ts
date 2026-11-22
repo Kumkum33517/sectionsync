@@ -123,7 +123,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const clean = rows.map((r) => pickInsert(r)).filter((r) => r.email && r.name && r.roll_number);
     if (clean.length === 0) return res.status(400).json({ error: "No valid student rows found." });
 
- h    // If replace mode — delete directly using admin client (service_role bypasses RLS)
+    // If replace mode — delete directly using admin client (service_role bypasses RLS)
     if (replaceAll) {
       // First nullify all FK references so delete succeeds
       await admin.from("students").update({
