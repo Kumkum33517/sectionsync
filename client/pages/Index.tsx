@@ -2428,9 +2428,13 @@ export default function Index() {
         if (sbSession && !session) {
           const em = sbSession.user.email?.toLowerCase() ?? "";
           const tok = sbSession.access_token;
-          // Detect role: query admins table directly using the restored session.
-          // setSession() already hydrated the anon client, so RLS works immediately.
           try {
+            // Explicitly set the session so auth.uid() is available for RLS queries
+            await supabase.auth.setSession({
+              access_token: tok,
+              refresh_token: sbSession.refresh_token,
+            });
+            // Now query admins — auth.uid() is guaranteed to be set
             const { data: adminRow } = await supabase
               .from("admins").select("id").eq("email", em).maybeSingle();
             if (adminRow) {
