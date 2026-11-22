@@ -2414,6 +2414,7 @@ function ChangePasswordPage({ session, showToast }: {
 // ─────────────────────────────────────────────────────────────────
 export default function Index() {
   const [session, setSession]       = useState<Session>(null);
+  const [sessionChecked, setSessionChecked] = useState(false); // true once we know if a session exists
   const [state, setState]           = useState<AppState>(() => createInitialData());
   const [adminPage, setAdminPage]   = useState<AdminPage>("dashboard");
   const [studentPage, setStudentPage] = useState<StudentPage>("dashboard");
@@ -2441,7 +2442,12 @@ export default function Index() {
             }
           } catch {
             // Network error on restore — stay logged out rather than guess role
+          } finally {
+            setSessionChecked(true);
           }
+        } else {
+          // No persisted session — show login immediately
+          setSessionChecked(true);
         }
       });
 
@@ -2515,6 +2521,7 @@ export default function Index() {
     setSession(s);
   };
 
+  if (!sessionChecked) return null; // wait for session restore before showing login or app
   if (!session) return <LoginScreen state={state} onLogin={handleLogin} />;
 
   const isAdmin = session.role === "admin";

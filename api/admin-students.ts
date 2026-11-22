@@ -125,15 +125,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // If replace mode — delete directly using admin client (service_role bypasses RLS)
     if (replaceAll) {
-      // First nullify all FK references so delete succeeds
-      await admin.from("students").update({
+      // Step 1: nullify seats.student_id FK (seats → students)
+      await admin.from("seats").update({ student_id: null, booked_at: null }).not("id", "is", null);
+      // Step 2: nullify student FK columns so the row can be deleted
+      const { error: nullifyErr } = await admin.from("students").update({
         auth_id: null,
         chosen_specialization_id: null,
         assigned_section_id: null,
         assigned_seat: null,
       }).not("id", "is", null);
-      // Now delete all rows
-      await admin.from("students").delete().not("id", "is", null);
+      if (nullifyErr) {
+        console.error("[admin-students] nullify error:", nullifyErr.message);
+        return res.status(500).json({ error: "Failed to clear existing student data." });
+      }
+      // Step 3: delete all student rows
+      const { error: deleteErr } = await admin.from("students").delete().not("id", "is", null);
+      if (deleteErr) {
+        console.error("[admin-students] delete error:", deleteErr.message);
+        return res.status(500).json({ error: "Failed to delete existing students." });
+      }
     }
 
     const { data, error } = await admin.from("students")
