@@ -2429,15 +2429,12 @@ export default function Index() {
           const em = sbSession.user.email?.toLowerCase() ?? "";
           const tok = sbSession.access_token;
           try {
-            // Explicitly set the session so auth.uid() is available for RLS queries
-            await supabase.auth.setSession({
-              access_token: tok,
-              refresh_token: sbSession.refresh_token,
+            // Use the API for role detection — reliable, uses service role key,
+            // not affected by anon client RLS timing issues
+            const r = await fetch("/api/admin-admins", {
+              headers: { Authorization: `Bearer ${tok}` },
             });
-            // Now query admins — auth.uid() is guaranteed to be set
-            const { data: adminRow } = await supabase
-              .from("admins").select("id").eq("email", em).maybeSingle();
-            if (adminRow) {
+            if (r.ok) {
               setSession({ role: "admin", email: em, accessToken: tok });
             } else {
               await handleLogin({ role: "student", email: em, accessToken: tok });
