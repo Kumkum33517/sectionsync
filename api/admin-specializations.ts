@@ -3,7 +3,7 @@
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { adminSupabase } from "./_supabase-admin";
-import { handleCors, getIp, checkRateLimit, verifyAdmin, safeError } from "./_utils";
+import { handleCors, verifyAdmin, safeError } from "./_utils";
 
 const ALLOWED = ["name", "batch", "description", "active"] as const;
 
