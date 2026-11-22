@@ -34,11 +34,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Create Supabase Auth account with a default password so they can sign in immediately
     // @ts-ignore — TS5 type compat
-    await adminSupabase.auth.admin.createUser({
+    const { error: authCreateErr } = await adminSupabase.auth.admin.createUser({
       email: em,
       password: "admin@sectionsync1",
       email_confirm: true,
     });
+    if (authCreateErr) console.error("[admin-admins] createUser error:", authCreateErr.message);
 
     return res.status(201).json({ ok: true, id: inserted.id });
   }
@@ -54,13 +55,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { error } = await adminSupabase.from("admins").delete().eq("id", id);
     if (error) return res.status(500).json({ error: safeError(error) });
 
-    // Also delete their Supabase Auth account so they can no longer sign in
-    // @ts-ignore — TS5 type compat
-    const { data: authUser } = await adminSupabase.auth.admin.getUserByEmail(row.email);
-    if (authUser?.user?.id) {
+    // Delete their Supabase Auth account so they can no longer sign in
+    try {
       // @ts-ignore — TS5 type compat
-      await adminSupabase.auth.admin.deleteUser(authUser.user.id);
-    }
+      const { data: authData, error: authFindErr } = await adminSupabase.auth.admin.getUserByEmail(row.email);
+      const authId = authData?.user?.id;
+      if (authId) {
+        // @ts-ignore — TS5 type compat
+        const { error: authDelErr } = await adminSupabase.auth.admin.deleteUser(authId);
+        if (authDelErr) console.error("[admin-admins] deleteUser error:", authDelErr.message);
+      } else {
+        console.error("[admin-admins] getUserByEmail failed:", authFindErr?.message, "email:", row.email);
+      }
+    } catch (e: any) { console.error("[admin-admins] auth delete exception:", e.message); }
 
     return res.status(200).json({ ok: true });
   }

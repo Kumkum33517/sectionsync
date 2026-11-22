@@ -727,26 +727,56 @@ function AdminSpecializations({ state, showToast, setState, token }: {
 // ─────────────────────────────────────────────────────────────────
 // ADMIN — Spec window
 // ─────────────────────────────────────────────────────────────────
-function AdminSpecWindow({ state, showToast, setState }: {
+function AdminSpecWindow({ state, showToast, setState, session }: {
   state: AppState;
   showToast: (m: string, err?: boolean) => void;
+  session: NonNullable<Session>;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
 }) {
   const isOpen = state.phase === "SPEC_WINDOW_OPEN";
   const activeSpecs = state.specializations.filter((s) => s.active);
 
-  const closeWindow = () => {
+  const closeWindow = async () => {
     if (activeSpecs.length === 0) { showToast("No active specializations. Add some first.", true); return; }
     const selected = state.students.filter((s) => s.chosenSpecialization !== null).length;
     if (selected === 0) { showToast("No students have selected a specialization yet.", true); return; }
-    const sections = autoCreateSections(state.students, state.specializations);
-    setState((p) => ({ ...p, phase: "SPEC_WINDOW_CLOSED", specWindowStatus: "CLOSED", sections }));
-    showToast(`Window closed. ${sections.length} sections auto-generated.`);
+    try {
+      // Auto-create sections in DB via POST /api/admin-config
+      const res = await fetch("/api/admin-config", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.accessToken ?? ""}` },
+      });
+      const data = await res.json();
+      if (!res.ok) { showToast(data.error ?? "Failed to close window.", true); return; }
+      // Reload sections from DB and update phase in local state
+      setState((p) => ({ ...p, phase: "SPEC_WINDOW_CLOSED", specWindowStatus: "CLOSED" }));
+      // Reload sections from DB
+      const secRes = await fetch("/api/admin-sections", { headers: { Authorization: `Bearer ${session.accessToken ?? ""}` } });
+      if (secRes.ok) {
+        const secData = await secRes.json();
+        const sections = (secData.data ?? []).map((s: any) => ({
+          id: s.id, name: s.name, capacity: s.capacity,
+          specializationId: s.specialization_id,
+          specializationName: s.specialization?.name ?? "",
+          occupancy: s.occupancy ?? 0,
+        }));
+        setState((p) => ({ ...p, sections }));
+      }
+      showToast(`Window closed. ${data.sectionsCreated ?? 0} sections created.`);
+    } catch { showToast("Network error. Try again.", true); }
   };
 
-  const reopenWindow = () => {
-    setState((p) => ({ ...p, phase: "SPEC_WINDOW_OPEN", specWindowStatus: "OPEN", sections: [] }));
-    showToast("Specialization window reopened.");
+  const reopenWindow = async () => {
+    try {
+      const res = await fetch("/api/admin-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+        body: JSON.stringify({ phase: "SPEC_WINDOW_OPEN" }),
+      });
+      if (!res.ok) { showToast("Failed to reopen window.", true); return; }
+      setState((p) => ({ ...p, phase: "SPEC_WINDOW_OPEN", specWindowStatus: "OPEN", sections: [] }));
+      showToast("Specialization window reopened.");
+    } catch { showToast("Network error. Try again.", true); }
   };
 
   return (
@@ -819,10 +849,11 @@ function downloadAllocationExcel(state: AppState) {
   XLSX.writeFile(wb, "section-allocation.xlsx");
 }
 
-function AdminSections({ state, showToast, setState }: {
+function AdminSections({ state, showToast, setState, session }: {
   state: AppState;
   showToast: (m: string, err?: boolean) => void;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
+  session: NonNullable<Session>;
 }) {
   const [showAddSection, setShowAddSection] = useState(false);
   const [newSecName, setNewSecName] = useState("");
@@ -836,19 +867,43 @@ function AdminSections({ state, showToast, setState }: {
   const updateCap = (id: string, val: number) =>
     setState((p) => ({ ...p, sections: p.sections.map((s) => s.id === id ? { ...s, capacity: Math.max(0, val) } : s) }));
 
-  const finalize = () => {
-    setState((p) => ({ ...p, phase: "SECTIONS_FINALIZED" }));
-    showToast("Sections finalized. You can now open the section-selection window.");
+  const finalize = async () => {
+    // Save all section capacities to DB first, then update phase
+    try {
+      await Promise.all(state.sections.map((s) =>
+        fetch("/api/admin-sections", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+          body: JSON.stringify({ id: s.id, capacity: s.capacity }),
+        })
+      ));
+      const res = await fetch("/api/admin-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+        body: JSON.stringify({ phase: "SECTIONS_FINALIZED" }),
+      });
+      if (!res.ok) { showToast("Failed to finalize.", true); return; }
+      setState((p) => ({ ...p, phase: "SECTIONS_FINALIZED" }));
+      showToast("Sections finalized. You can now open the section-selection window.");
+    } catch { showToast("Network error.", true); }
   };
 
   // Unlock — revert to SPEC_WINDOW_CLOSED so admin can adjust again
-  const unlock = () => {
-    setState((p) => ({ ...p, phase: "SPEC_WINDOW_CLOSED" }));
-    showToast("Sections unlocked. Adjust capacities and finalize again.");
+  const unlock = async () => {
+    try {
+      const res = await fetch("/api/admin-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+        body: JSON.stringify({ phase: "SPEC_WINDOW_CLOSED" }),
+      });
+      if (!res.ok) { showToast("Failed to unlock.", true); return; }
+      setState((p) => ({ ...p, phase: "SPEC_WINDOW_CLOSED" }));
+      showToast("Sections unlocked. Adjust capacities and finalize again.");
+    } catch { showToast("Network error.", true); }
   };
 
   // Add a section manually
-  const addSection = () => {
+  const addSection = async () => {
     if (!newSecName.trim() || !newSecSpec) {
       showToast("Enter a section name and pick a specialization.", true); return;
     }
@@ -856,25 +911,43 @@ function AdminSections({ state, showToast, setState }: {
       (s) => s.specializationName === newSecSpec && s.name.toLowerCase() === newSecName.trim().toLowerCase()
     );
     if (dup) { showToast("A section with that name already exists.", true); return; }
-    const newSec: Section = {
-      id: `${newSecSpec.toLowerCase().replace(/[/ ]/g, "-")}-${Date.now()}`,
-      specializationName: newSecSpec,
-      name: newSecName.trim(),
-      capacity: 0,
-    };
-    setState((p) => ({ ...p, sections: [...p.sections, newSec] }));
-    setNewSecName(""); setNewSecSpec(""); setShowAddSection(false);
-    showToast(`${newSec.name} added to ${newSecSpec}.`);
+    const spec = state.specializations.find((s) => s.name === newSecSpec);
+    if (!spec) { showToast("Specialization not found.", true); return; }
+    try {
+      const res = await fetch("/api/admin-sections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+        body: JSON.stringify({ specialization_id: spec.id, name: newSecName.trim(), capacity: 0 }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showToast(data.error ?? "Failed to add section.", true); return; }
+      const newSec: Section = {
+        id: data.id ?? `${newSecSpec.toLowerCase().replace(/[/ ]/g, "-")}-${Date.now()}`,
+        specializationName: newSecSpec,
+        name: newSecName.trim(),
+        capacity: 0,
+      };
+      setState((p) => ({ ...p, sections: [...p.sections, newSec] }));
+      setNewSecName(""); setNewSecSpec(""); setShowAddSection(false);
+      showToast(`${newSec.name} added to ${newSecSpec}.`);
+    } catch { showToast("Network error.", true); }
   };
 
   // Delete section — only if no students seated
-  const deleteSection = (sec: Section) => {
+  const deleteSection = async (sec: Section) => {
     const seated = state.students.filter((s) => s.assignedSectionId === sec.id).length;
     if (seated > 0) {
       showToast(`Cannot delete — ${seated} student(s) already in ${sec.name}.`, true); return;
     }
-    setState((p) => ({ ...p, sections: p.sections.filter((s) => s.id !== sec.id) }));
-    showToast(`${sec.name} deleted.`);
+    try {
+      const res = await fetch(`/api/admin-sections?id=${sec.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.accessToken ?? ""}` },
+      });
+      if (!res.ok) { showToast("Failed to delete section.", true); return; }
+      setState((p) => ({ ...p, sections: p.sections.filter((s) => s.id !== sec.id) }));
+      showToast(`${sec.name} deleted.`);
+    } catch { showToast("Network error.", true); }
   };
 
   if (state.sections.length === 0) {
@@ -1013,16 +1086,25 @@ function AdminSections({ state, showToast, setState }: {
 // ─────────────────────────────────────────────────────────────────
 // ADMIN — Section window
 // ─────────────────────────────────────────────────────────────────
-function AdminSectionWindow({ state, showToast, setState }: {
+function AdminSectionWindow({ state, showToast, setState, session }: {
   state: AppState;
   showToast: (m: string, err?: boolean) => void;
+  session: NonNullable<Session>;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
 }) {
   const canOpen = state.phase === "SECTIONS_FINALIZED" || state.phase === "SECTION_WINDOW_CLOSED";
   const isOpen  = state.phase === "SECTION_WINDOW_OPEN";
   const seated  = state.students.filter((s) => s.assignedSectionId !== null).length;
 
-  const handleCloseWindow = () => {
+  const handleCloseWindow = async () => {
+    try {
+      const res = await fetch("/api/admin-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+        body: JSON.stringify({ phase: "SECTION_WINDOW_CLOSED" }),
+      });
+      if (!res.ok) { showToast("Failed to close window.", true); return; }
+    } catch { showToast("Network error. Try again.", true); return; }
     setState((p) => ({ ...p, phase: "SECTION_WINDOW_CLOSED", sectionWindowStatus: "CLOSED" }));
     // Assign G1/G2 groups to all seated students
     const students = state.students.filter((s) => s.assignedSectionId !== null);
@@ -1034,7 +1116,6 @@ function AdminSectionWindow({ state, showToast, setState }: {
     }
     const updates: Record<string, 1 | 2> = {};
     for (const sectionStudents of Object.values(bySection)) {
-      // Sort by seat number so lower seats = G1
       const sorted = [...sectionStudents].sort((a, b) => (a.assignedSeat ?? 0) - (b.assignedSeat ?? 0));
       const half = Math.ceil(sorted.length / 2);
       sorted.forEach((s, i) => { updates[s.id] = i < half ? 1 : 2; });
@@ -1047,7 +1128,7 @@ function AdminSectionWindow({ state, showToast, setState }: {
     }));
     const g1 = Object.values(updates).filter((g) => g === 1).length;
     const g2 = Object.values(updates).filter((g) => g === 2).length;
-    showToast(`Window closed. Groups assigned: G1 = ${g1} students, G2 = ${g2} students.`);
+    showToast(`Window closed. Groups assigned: G1 = ${g1}, G2 = ${g2}.`);
   };
 
   const exportExcel = () => downloadAllocationExcel(state);
@@ -1083,7 +1164,19 @@ function AdminSectionWindow({ state, showToast, setState }: {
               )
               : (
                 <div className="space-y-3">
-                  <Btn variant="lime" onClick={() => { setState((p) => ({ ...p, phase: "SECTION_WINDOW_OPEN", sectionWindowStatus: "OPEN", sectionWindowDeadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() })); showToast("Section-selection window opened."); }} disabled={!canOpen} className="w-full"><CheckCircle2 size={15} /> Open section-selection window</Btn>
+                  <Btn variant="lime" onClick={async () => {
+                    const deadline = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+                    try {
+                      const res = await fetch("/api/admin-config", {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+                        body: JSON.stringify({ phase: "SECTION_WINDOW_OPEN", section_window_deadline: deadline }),
+                      });
+                      if (!res.ok) { showToast("Failed to open window.", true); return; }
+                      setState((p) => ({ ...p, phase: "SECTION_WINDOW_OPEN", sectionWindowStatus: "OPEN", sectionWindowDeadline: deadline }));
+                      showToast("Section-selection window opened.");
+                    } catch { showToast("Network error.", true); }
+                  }} disabled={!canOpen} className="w-full"><CheckCircle2 size={15} /> Open section-selection window</Btn>
                   {state.phase === "SECTION_WINDOW_CLOSED" && (
                     <Btn variant="secondary" onClick={exportExcel} className="w-full"><Download size={14} /> Download allocation Excel</Btn>
                   )}
@@ -2513,63 +2606,95 @@ export default function Index() {
   const [studentPage, setStudentPage] = useState<StudentPage>("dashboard");
   const [toast, setToast]           = useState<Toast>(null);
 
-  // Load specializations and system config from Supabase on startup
+  // Load all data from Supabase on startup
   useEffect(() => {
-    // First check if Supabase has a persisted session (handles page refresh)
     (async () => {
-      supabase.auth.getSession().then(async ({ data: { session: sbSession } }) => {
-        if (sbSession && !session) {
-          const em = sbSession.user.email?.toLowerCase() ?? "";
-          const tok = sbSession.access_token;
-          try {
-            // Use the API for role detection — reliable, uses service role key,
-            // not affected by anon client RLS timing issues
-            const r = await fetch("/api/admin-admins", {
-              headers: { Authorization: `Bearer ${tok}` },
-            });
-            if (r.ok) {
-              setSession({ role: "admin", email: em, accessToken: tok });
-            } else {
-              await handleLogin({ role: "student", email: em, accessToken: tok });
-            }
-          } catch {
-            // Network error on restore — stay logged out rather than guess role
-          } finally {
-            setSessionChecked(true);
+      // Load specializations and system config in parallel FIRST so they're
+      // available before session restore tries to resolve spec UUIDs to names
+      const [specsRes, configRes] = await Promise.all([
+        supabase.from("specializations").select("*").order("name"),
+        supabase.from("system_config").select("*").eq("id", 1).single(),
+      ]);
+
+      if (specsRes.data && specsRes.data.length > 0) {
+        const specs: SpecializationDef[] = specsRes.data.map((s: any) => ({
+          id:          s.id,
+          name:        s.name,
+          batch:       s.batch ?? "2024-25",
+          active:      s.active ?? true,
+          description: s.description ?? undefined,
+          createdAt:   s.created_at,
+        }));
+        setState((p) => ({ ...p, specializations: specs }));
+      }
+
+      if (configRes.data) {
+        const d = configRes.data;
+        setState((p) => ({
+          ...p,
+          phase:                d.phase,
+          specWindowStatus:     d.spec_window_open ? "OPEN" : "CLOSED",
+          sectionWindowStatus:  d.section_window_open ? "OPEN" : "CLOSED",
+          sectionWindowDeadline: d.section_window_deadline ?? null,
+        }));
+      }
+
+      // Load sections from DB
+      supabase.from("sections")
+        .select("id, name, capacity, specialization_id, specialization:specialization_id(id,name,batch)")
+        .order("name")
+        .then(({ data: secData }) => {
+          if (secData && secData.length > 0) {
+            const sections = secData.map((s: any) => ({
+              id: s.id, name: s.name, capacity: s.capacity,
+              specializationId: s.specialization_id,
+              specializationName: s.specialization?.name ?? "",
+              occupancy: 0,
+            }));
+            setState((p) => ({ ...p, sections }));
           }
-        } else {
-          // No persisted session — show login immediately
-          setSessionChecked(true);
-        }
-      });
+        });
 
-      // Load specializations
-      supabase.from("specializations").select("*").order("name").then(({ data }) => {
-        if (data && data.length > 0) {
-          const specs: SpecializationDef[] = data.map((s: any) => ({
-            id:          s.id,
-            name:        s.name,
-            batch:       s.batch ?? "2024-25",
-            active:      s.active ?? true,
-            description: s.description ?? undefined,
-            createdAt:   s.created_at,
-          }));
-          setState((p) => ({ ...p, specializations: specs }));
+      // Now check for a persisted session — specializations are loaded so
+      // handleLogin can resolve chosen_specialization_id UUID to name correctly
+      const { data: { session: sbSession } } = await supabase.auth.getSession();
+      if (sbSession && !session) {
+        const em = sbSession.user.email?.toLowerCase() ?? "";
+        const tok = sbSession.access_token;
+        try {
+          const r = await fetch("/api/admin-admins", {
+            headers: { Authorization: `Bearer ${tok}` },
+          });
+          if (r.ok) {
+            setSession({ role: "admin", email: em, accessToken: tok });
+            // Pre-load student list so admin dashboard doesn't flash empty
+            fetch("/api/admin-students", { headers: { Authorization: `Bearer ${tok}` } })
+              .then((r) => r.ok ? r.json() : null)
+              .then((d) => {
+                if (d?.data) {
+                  // specs are already loaded at this point
+                  setState((p) => ({
+                    ...p,
+                    students: d.data.map((s: any) => ({
+                      id: s.id, rollNumber: s.roll_number, name: s.name, email: s.email,
+                      chosenSpecialization: s.chosen_specialization_id
+                        ? (p.specializations.find((sp) => sp.id === s.chosen_specialization_id)?.name ?? null)
+                        : null,
+                      assignedSectionId: s.assigned_section_id ?? null,
+                      assignedSeat: s.assigned_seat ?? null,
+                      group: s.group_number ?? null,
+                    })),
+                  }));
+                }
+              }).catch(() => {});
+          } else {
+            await handleLogin({ role: "student", email: em, accessToken: tok });
+          }
+        } catch {
+          // Network error on restore — stay logged out
         }
-      });
-
-      // Load system config (phase + window status)
-      supabase.from("system_config").select("*").eq("id", 1).single().then(({ data }) => {
-        if (data) {
-          setState((p) => ({
-            ...p,
-            phase:                data.phase,
-            specWindowStatus:     data.spec_window_open ? "OPEN" : "CLOSED",
-            sectionWindowStatus:  data.section_window_open ? "OPEN" : "CLOSED",
-            sectionWindowDeadline: data.section_window_deadline ?? null,
-          }));
-        }
-      });
+      }
+      setSessionChecked(true);
     })();
   }, []);
 
@@ -2652,9 +2777,9 @@ export default function Index() {
           <>
             {adminPage === "dashboard"       && <AdminDashboard state={state} />}
             {adminPage === "specializations" && <AdminSpecializations state={state} showToast={showToast} setState={setState} token={session.accessToken ?? ""} />}
-            {adminPage === "spec-window"     && <AdminSpecWindow state={state} showToast={showToast} setState={setState} />}
-            {adminPage === "sections"        && <AdminSections state={state} showToast={showToast} setState={setState} />}
-            {adminPage === "section-window"  && <AdminSectionWindow state={state} showToast={showToast} setState={setState} />}
+            {adminPage === "spec-window"     && <AdminSpecWindow state={state} showToast={showToast} setState={setState} session={session} />}
+            {adminPage === "sections"        && <AdminSections state={state} showToast={showToast} setState={setState} session={session} />}
+            {adminPage === "section-window"  && <AdminSectionWindow state={state} showToast={showToast} setState={setState} session={session} />}
             {adminPage === "students"        && <AdminStudents state={state} />}
             {adminPage === "student-list"    && <AdminStudentList state={state} showToast={showToast} setState={setState} session={session} />}
             {adminPage === "admin-access"    && <AdminAccessManagement state={state} showToast={showToast} setState={setState} currentEmail={session.email} session={session} />}

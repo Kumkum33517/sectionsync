@@ -30,11 +30,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ data: enriched });
   }
 
+  if (req.method === "POST") {
+    const { specialization_id, name, capacity } = req.body ?? {};
+    if (!specialization_id || !name?.trim()) {
+      return res.status(400).json({ error: "specialization_id and name are required." });
+    }
+    const cap = typeof capacity === "number" ? capacity : 0;
+    const { data, error } = await adminSupabase.from("sections")
+      .insert({ specialization_id, name: name.trim(), capacity: cap })
+      .select("id").single();
+    if (error) return res.status(error.code === "23505" ? 409 : 500).json({ error: safeError(error) });
+    return res.status(201).json({ ok: true, id: data.id });
+  }
+
   if (req.method === "PUT") {
     const { id, capacity } = req.body ?? {};
     if (!id) return res.status(400).json({ error: "id is required." });
-    if (typeof capacity !== "number" || capacity < 1) {
-      return res.status(400).json({ error: "capacity must be a positive integer." });
+    if (typeof capacity !== "number" || capacity < 0) {
+      return res.status(400).json({ error: "capacity must be a non-negative integer." });
     }
     const { error } = await adminSupabase.from("sections").update({ capacity }).eq("id", id);
     if (error) return res.status(500).json({ error: safeError(error) });
