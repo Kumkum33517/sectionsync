@@ -2428,14 +2428,12 @@ export default function Index() {
         if (sbSession && !session) {
           const em = sbSession.user.email?.toLowerCase() ?? "";
           const tok = sbSession.access_token;
-          // Detect role via the API (uses service role key — bypasses RLS,
-          // so it works even before the anon client session is fully hydrated)
+          // Detect role: query admins table directly using the restored session.
+          // setSession() already hydrated the anon client, so RLS works immediately.
           try {
-            const r = await fetch("/api/admin-admins", {
-              headers: { Authorization: `Bearer ${tok}` },
-            });
-            const isAdmin = r.ok;
-            if (isAdmin) {
+            const { data: adminRow } = await supabase
+              .from("admins").select("id").eq("email", em).maybeSingle();
+            if (adminRow) {
               setSession({ role: "admin", email: em, accessToken: tok });
             } else {
               await handleLogin({ role: "student", email: em, accessToken: tok });
@@ -2536,7 +2534,12 @@ export default function Index() {
         studentPage={studentPage}
         setAdminPage={setAdminPage}
         setStudentPage={setStudentPage}
-        onLogout={() => setSession(null)}
+        onLogout={() => {
+          supabase.auth.signOut(); // clear persisted session from localStorage
+          setSession(null);
+          setAdminPage("dashboard");
+          setStudentPage("dashboard");
+        }}
       >
         {isAdmin && (
           <>
