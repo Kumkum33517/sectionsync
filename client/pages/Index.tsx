@@ -1874,18 +1874,48 @@ function StudentDashboard({ me, state }: { me: Student; state: AppState }) {
 // ─────────────────────────────────────────────────────────────────
 // STUDENT — Specialization selection
 // ─────────────────────────────────────────────────────────────────
-function StudentSpecSelection({ me, state, showToast, setState }: {
+function StudentSpecSelection({ me, state, showToast, setState, session }: {
   me: Student; state: AppState;
   showToast: (m: string, err?: boolean) => void;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
+  session: NonNullable<Session>;
 }) {
-  const isOpen     = state.phase === "SPEC_WINDOW_OPEN";
+  const isOpen      = state.phase === "SPEC_WINDOW_OPEN";
   const activeSpecs = state.specializations.filter((s) => s.active);
+  // pending = what the student has clicked but not yet confirmed
+  const [pending, setPending] = useState<string | null>(null);
+  const [saving, setSaving]   = useState(false);
 
-  const pick = (specName: string) => {
-    if (!isOpen) { showToast("The specialization window is not open.", true); return; }
-    setState((p) => ({ ...p, students: p.students.map((s) => s.id === me.id ? { ...s, chosenSpecialization: specName } : s) }));
-    showToast(`Specialization set to ${specName}`);
+  // The confirmed selection (from DB, persists across sessions)
+  const confirmed = me.chosenSpecialization;
+  // What to highlight: pending takes priority, falls back to confirmed
+  const displayed = pending ?? confirmed;
+
+  const confirmSelection = async () => {
+    if (!pending) return;
+    const spec = state.specializations.find((s) => s.name === pending);
+    if (!spec) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/student-spec", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+        body: JSON.stringify({ specialization_id: spec.id }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        showToast(d.error ?? "Failed to save. Try again.", true);
+        return;
+      }
+      // Update local state so admin panel and dashboard reflect immediately
+      setState((p) => ({ ...p, students: p.students.map((s) => s.id === me.id ? { ...s, chosenSpecialization: pending } : s) }));
+      showToast(`Specialization confirmed: ${pending}`);
+      setPending(null);
+    } catch {
+      showToast("Network error. Try again.", true);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -1894,13 +1924,18 @@ function StudentSpecSelection({ me, state, showToast, setState }: {
         <h2 className="font-display text-xl font-bold text-[#0b1825]">Choose your specialization</h2>
         <p className="text-sm text-[#71818a] mt-1">
           {isOpen
-            ? me.chosenSpecialization ? "You've selected a specialization. You can change it while the window is open." : "Select the specialization you want to pursue."
+            ? confirmed ? "Your selection is saved. You can change it while the window is open." : "Select a specialization and confirm your choice."
             : "The specialization selection window is currently closed."}
         </p>
       </div>
       {!isOpen && (
         <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 flex items-center gap-2">
           <Lock size={14} /> Window closed. Contact your admin if changes are needed.
+        </div>
+      )}
+      {confirmed && !pending && (
+        <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 size={14} /> Your selection <strong>{confirmed}</strong> is confirmed and saved.
         </div>
       )}
       {activeSpecs.length === 0 && isOpen && (
@@ -1910,26 +1945,37 @@ function StudentSpecSelection({ me, state, showToast, setState }: {
       )}
       <div className="grid gap-3">
         {activeSpecs.map((spec, i) => {
-          const isChosen = me.chosenSpecialization === spec.name;
+          const isDisplayed = displayed === spec.name;
+          const isConfirmed = confirmed === spec.name;
           const pal = specPalette(i);
           return (
-            <button key={spec.id} onClick={() => pick(spec.name)} disabled={!isOpen}
+            <button key={spec.id} onClick={() => { if (isOpen) setPending(spec.name); }} disabled={!isOpen}
               className={`w-full text-left rounded-2xl border-2 p-5 transition
-                ${isChosen ? "border-[#0b1825] bg-[#0b1825] text-white" : "border-[#dde4cc] bg-white hover:border-[#0b1825]/40 hover:bg-[#f9faf3]"}
+                ${isDisplayed ? "border-[#0b1825] bg-[#0b1825] text-white" : "border-[#dde4cc] bg-white hover:border-[#0b1825]/40 hover:bg-[#f9faf3]"}
                 disabled:opacity-60 disabled:cursor-not-allowed`}>
               <div className="flex items-center gap-3 mb-1.5">
-                <div className={`h-3 w-3 rounded-full ${isChosen ? "bg-[#d8ff5b]" : pal.dot}`} />
-                <span className={`font-bold text-base ${isChosen ? "text-white" : "text-[#0b1825]"}`}>{spec.name}</span>
+                <div className={`h-3 w-3 rounded-full ${isDisplayed ? "bg-[#d8ff5b]" : pal.dot}`} />
+                <span className={`font-bold text-base ${isDisplayed ? "text-white" : "text-[#0b1825]"}`}>{spec.name}</span>
                 <Badge color="default">{spec.batch}</Badge>
-                {isChosen && <span className="ml-auto flex items-center gap-1 text-xs font-bold text-[#d8ff5b]"><Check size={12} /> Selected</span>}
+                {isConfirmed && !pending && <span className="ml-auto flex items-center gap-1 text-xs font-bold text-[#d8ff5b]"><Check size={12} /> Confirmed</span>}
+                {isDisplayed && pending && <span className="ml-auto flex items-center gap-1 text-xs font-bold text-[#d8ff5b]"><Check size={12} /> Selected</span>}
               </div>
               {spec.description && (
-                <p className={`text-sm ml-6 ${isChosen ? "text-white/70" : "text-[#71818a]"}`}>{spec.description}</p>
+                <p className={`text-sm ml-6 ${isDisplayed ? "text-white/70" : "text-[#71818a]"}`}>{spec.description}</p>
               )}
             </button>
           );
         })}
       </div>
+      {isOpen && pending && (
+        <div className="flex gap-3 items-center pt-1">
+          <Btn onClick={confirmSelection} disabled={saving} variant="lime">
+            {saving ? "Saving…" : <><Check size={14} /> Confirm selection</>}
+          </Btn>
+          <Btn variant="secondary" onClick={() => setPending(null)} disabled={saving}>Cancel</Btn>
+          <span className="text-xs text-[#71818a]">Your choice won't be saved until you confirm.</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -2558,7 +2604,7 @@ export default function Index() {
         {!isAdmin && liveMe && (
           <>
             {studentPage === "dashboard"      && <StudentDashboard me={liveMe} state={state} />}
-            {studentPage === "spec-selection" && <StudentSpecSelection me={liveMe} state={state} showToast={showToast} setState={setState} />}
+            {studentPage === "spec-selection" && <StudentSpecSelection me={liveMe} state={state} showToast={showToast} setState={setState} session={session} />}
             {studentPage === "section-seat"   && <StudentSectionSeat me={liveMe} state={state} showToast={showToast} setState={setState} />}
             {studentPage === "swaps"          && <StudentSwapRequests me={liveMe} state={state} showToast={showToast} setState={setState} />}
             {studentPage === "change-password" && <ChangePasswordPage session={session} showToast={showToast} />}
