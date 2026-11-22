@@ -4,8 +4,10 @@
   "outputDirectory": "dist/spa",
   "framework": null,
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/:path*" },
-    { "source": "/(.*)",       "destination": "/index.html" }
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ],
   "headers": [
     {
@@ -53,12 +55,12 @@
           "value": "Content-Type, Authorization"
         },
         {
-          "key": "Access-Control-Max-Age",
-          "value": "86400"
-        },
-        {
           "key": "Vary",
           "value": "Origin"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate"
         }
       ]
     }
