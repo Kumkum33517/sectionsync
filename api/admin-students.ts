@@ -221,6 +221,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ ok: true });
   }
 
+  // ── DELETE ALL ────────────────────────────────────────────────
+  if (req.method === "DELETE" && req.query.deleteAll === "1") {
+    // Step 1: nullify seats FK
+    await admin.from("seats").update({ student_id: null, booked_at: null }).not("id", "is", null);
+    // Step 2: get all auth_ids before deleting
+    const { data: allStudents } = await admin.from("students").select("auth_id, email").not("id", "is", null);
+    // Step 3: nullify FKs then delete rows
+    await admin.from("students").update({ auth_id: null, chosen_specialization_id: null, assigned_section_id: null, assigned_seat: null }).not("id", "is", null);
+    const { error: delErr } = await admin.from("students").delete().not("id", "is", null);
+    if (delErr) return res.status(500).json({ error: "Failed to delete students." });
+    // Step 4: delete auth accounts in background
+    (async () => {
+      for (const s of allStudents ?? []) {
+        const uid = s.auth_id;
+        if (uid) {
+          // @ts-ignore — TS5 type compat
+          await admin.auth.admin.deleteUser(uid);
+        }
+      }
+    })().catch((e) => console.error("[admin-students] deleteAll auth cleanup:", e));
+    return res.status(200).json({ ok: true });
+  }
+
   // ── DELETE ────────────────────────────────────────────────────
   if (req.method === "DELETE") {
     const id = req.query.id as string;

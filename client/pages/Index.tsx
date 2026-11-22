@@ -1268,7 +1268,10 @@ function AdminStudentList({ state, showToast, setState, session }: {
           rollNumber:           s.roll_number,
           name:                 s.name,
           email:                s.email,
-          chosenSpecialization: s.chosen_specialization_id ?? null,
+          // Resolve UUID to name so comparisons work consistently
+          chosenSpecialization: s.chosen_specialization_id
+            ? (state.specializations.find((sp) => sp.id === s.chosen_specialization_id)?.name ?? null)
+            : null,
           assignedSectionId:    s.assigned_section_id ?? null,
           assignedSeat:         s.assigned_seat ?? null,
           group:                s.group_number ?? null,
@@ -1466,6 +1469,25 @@ function AdminStudentList({ state, showToast, setState, session }: {
     setShowAdd(false);
   };
 
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
+
+  const deleteAllStudents = async () => {
+    setDeletingAll(true);
+    const tok = await getToken();
+    try {
+      const res = await fetch("/api/admin-students?deleteAll=1", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${tok}` },
+      });
+      if (!res.ok) { const d = await res.json(); showToast(d.error ?? "Failed to delete.", true); return; }
+      setState((p) => ({ ...p, students: [] }));
+      showToast("All students deleted.");
+      setConfirmDeleteAll(false);
+    } catch { showToast("Network error.", true); }
+    setDeletingAll(false);
+  };
+
   const removeStudent = async (id: string) => {
     const tok = await getToken();
     try {
@@ -1498,6 +1520,14 @@ function AdminStudentList({ state, showToast, setState, session }: {
           <p className="text-sm text-[#71818a] mt-0.5">{state.students.length} authorized students</p>
         </div>
         <Btn variant="secondary" onClick={downloadTemplate}><Download size={14} /> Excel template</Btn>
+        {!confirmDeleteAll
+          ? <Btn variant="danger" onClick={() => setConfirmDeleteAll(true)} disabled={state.students.length === 0}><Trash2 size={14} /> Delete entire list</Btn>
+          : <div className="flex items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm">
+              <span className="text-red-700 font-medium">Delete all {state.students.length} students?</span>
+              <Btn variant="danger" onClick={deleteAllStudents} disabled={deletingAll}>{deletingAll ? "Deleting…" : "Yes, delete all"}</Btn>
+              <Btn variant="secondary" onClick={() => setConfirmDeleteAll(false)}>Cancel</Btn>
+            </div>
+        }
         <Btn variant="primary" onClick={openAdd}><Plus size={14} /> Add student</Btn>
       </div>
 
@@ -2563,12 +2593,16 @@ export default function Index() {
           .eq("email", s.email.toLowerCase())
           .maybeSingle();
         if (data) {
+          // Resolve chosen_specialization_id UUID → spec name for consistent comparisons
+          const chosenSpec = data.chosen_specialization_id
+            ? (state.specializations.find((sp) => sp.id === data.chosen_specialization_id)?.name ?? null)
+            : null;
           const student: Student = {
             id:                   data.id,
             rollNumber:           data.roll_number,
             name:                 data.name,
             email:                data.email,
-            chosenSpecialization: data.chosen_specialization_id ?? null,
+            chosenSpecialization: chosenSpec,
             assignedSectionId:    data.assigned_section_id ?? null,
             assignedSeat:         data.assigned_seat ?? null,
             group:                data.group_number ?? null,
