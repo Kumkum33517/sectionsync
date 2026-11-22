@@ -33,9 +33,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: student } = await adminSupabase.from("students").select("id").eq("email", em).maybeSingle();
     if (student) return res.status(409).json({ error: "That email belongs to a student — lists cannot overlap." });
 
-    const { error } = await adminSupabase.from("admins").insert({ name: name.trim(), email: em, role });
+    const { data: inserted, error } = await adminSupabase
+      .from("admins").insert({ name: name.trim(), email: em, role }).select("id").single();
     if (error) return res.status(error.code === "23505" ? 409 : 500).json({ error: safeError(error) });
-    return res.status(201).json({ ok: true });
+
+    // Create Supabase Auth account with a default password so they can sign in immediately
+    // @ts-ignore — TS5 type compat
+    await adminSupabase.auth.admin.createUser({
+      email: em,
+      password: "admin@sectionsync1",
+      email_confirm: true,
+    });
+
+    return res.status(201).json({ ok: true, id: inserted.id });
   }
 
   if (req.method === "DELETE") {
@@ -48,6 +58,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     const { error } = await adminSupabase.from("admins").delete().eq("id", id);
     if (error) return res.status(500).json({ error: safeError(error) });
+
+    // Also delete their Supabase Auth account so they can no longer sign in
+    // @ts-ignore — TS5 type compat
+    const { data: authUser } = await adminSupabase.auth.admin.getUserByEmail(row.email);
+    if (authUser?.user?.id) {
+      // @ts-ignore — TS5 type compat
+      await adminSupabase.auth.admin.deleteUser(authUser.user.id);
+    }
+
     return res.status(200).json({ ok: true });
   }
 

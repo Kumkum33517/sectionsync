@@ -1681,9 +1681,10 @@ function AdminStudentList({ state, showToast, setState, session }: {
 // ─────────────────────────────────────────────────────────────────
 // ADMIN — Admin access management
 // ─────────────────────────────────────────────────────────────────
-function AdminAccessManagement({ state, showToast, setState, currentEmail }: {
+function AdminAccessManagement({ state, showToast, setState, currentEmail, session }: {
   state: AppState;
   showToast: (m: string, err?: boolean) => void;
+  session: NonNullable<Session>;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
   currentEmail: string;
 }) {
@@ -1691,7 +1692,7 @@ function AdminAccessManagement({ state, showToast, setState, currentEmail }: {
   const [form, setForm] = useState({ name: "", email: "", role: "team" as AdminUser["role"] });
   const [formErr, setFormErr] = useState("");
 
-  const addAdmin = () => {
+  const addAdmin = async () => {
     setFormErr("");
     if (!form.name.trim() || !form.email.trim()) { setFormErr("Name and email are required."); return; }
     if (!form.email.includes("@")) { setFormErr("Invalid email."); return; }
@@ -1699,17 +1700,33 @@ function AdminAccessManagement({ state, showToast, setState, currentEmail }: {
     if (dup) { setFormErr("This email is already in the admin list."); return; }
     const isStudent = state.students.find((s) => s.email.toLowerCase() === form.email.toLowerCase());
     if (isStudent) { setFormErr("This email belongs to a student. Admin and student lists must not overlap."); return; }
-    const newAdmin: AdminUser = { id: `admin-${Date.now()}`, name: form.name.trim(), email: form.email.trim().toLowerCase(), role: form.role, addedAt: new Date().toISOString() };
-    setState((p) => ({ ...p, adminUsers: [...p.adminUsers, newAdmin] }));
-    showToast(`${form.name} added as admin.`);
-    setForm({ name: "", email: "", role: "team" });
-    setShowAdd(false);
+    try {
+      const res = await fetch("/api/admin-admins", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+        body: JSON.stringify({ name: form.name.trim(), email: form.email.trim().toLowerCase(), role: form.role }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setFormErr(data.error ?? "Failed to add admin."); return; }
+      const newAdmin: AdminUser = { id: data.id ?? `admin-${Date.now()}`, name: form.name.trim(), email: form.email.trim().toLowerCase(), role: form.role, addedAt: new Date().toISOString() };
+      setState((p) => ({ ...p, adminUsers: [...p.adminUsers, newAdmin] }));
+      showToast(`${form.name} added as admin. Default password: admin@sectionsync1`);
+      setForm({ name: "", email: "", role: "team" });
+      setShowAdd(false);
+    } catch { setFormErr("Network error. Try again."); }
   };
 
-  const removeAdmin = (id: string, email: string) => {
+  const removeAdmin = async (id: string, email: string) => {
     if (email.toLowerCase() === currentEmail.toLowerCase()) { showToast("You cannot remove your own admin access.", true); return; }
-    setState((p) => ({ ...p, adminUsers: p.adminUsers.filter((a) => a.id !== id) }));
-    showToast("Admin removed.");
+    try {
+      const res = await fetch(`/api/admin-admins?id=${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.accessToken ?? ""}` },
+      });
+      if (!res.ok) { showToast("Failed to remove admin. Try again.", true); return; }
+      setState((p) => ({ ...p, adminUsers: p.adminUsers.filter((a) => a.id !== id) }));
+      showToast("Admin removed.");
+    } catch { showToast("Network error. Try again.", true); }
   };
 
   const fmtDate = (iso: string) =>
@@ -2597,7 +2614,7 @@ export default function Index() {
             {adminPage === "section-window"  && <AdminSectionWindow state={state} showToast={showToast} setState={setState} />}
             {adminPage === "students"        && <AdminStudents state={state} />}
             {adminPage === "student-list"    && <AdminStudentList state={state} showToast={showToast} setState={setState} session={session} />}
-            {adminPage === "admin-access"    && <AdminAccessManagement state={state} showToast={showToast} setState={setState} currentEmail={session.email} />}
+            {adminPage === "admin-access"    && <AdminAccessManagement state={state} showToast={showToast} setState={setState} currentEmail={session.email} session={session} />}
             {adminPage === "change-password" && <ChangePasswordPage session={session} showToast={showToast} />}
           </>
         )}
