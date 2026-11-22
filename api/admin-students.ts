@@ -151,29 +151,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .select("id, email, roll_number");
     if (error) return res.status(500).json({ error: safeError(error) });
 
-    // Auto-create auth accounts in parallel batches of 20 to stay within timeout
-    const BATCH = 20;
-    let authCreated = 0;
+    // Fire-and-forget: create auth accounts in background without blocking the response.
+    // sign-in.ts handles auth_id linking lazily on first login for any gaps.
     const students = data ?? [];
-    for (let i = 0; i < students.length; i += BATCH) {
-      const batch = students.slice(i, i + BATCH);
-      await Promise.all(batch.map(async (student) => {
-        const defaultPassword = `${(student.roll_number as string).toLowerCase()}@1234`;
-        // @ts-ignore — TS5 type compat
-        const { data: created, error: authErr } = await admin.auth.admin.createUser({
-          email: student.email as string,
-          password: defaultPassword,
-          email_confirm: true,
-        });
-        if (!authErr && created?.user) {
-          authCreated++;
-          await admin.from("students")
-            .update({ auth_id: created.user.id })
-            .eq("email", student.email);
-        }
-      }));
-    }
-    return res.status(200).json({ ok: true, inserted: students.length, authCreated });
+    (async () => {
+      const BATCH = 20;
+      for (let i = 0; i < students.length; i += BATCH) {
+        const batch = students.slice(i, i + BATCH);
+        await Promise.all(batch.map(async (student) => {
+          const defaultPassword = `${(student.roll_number as string).toLowerCase()}@1234`;
+          // @ts-ignore — TS5 type compat
+          const { data: created, error: authErr } = await admin.auth.admin.createUser({
+            email: student.email as string,
+            password: defaultPassword,
+            email_confirm: true,
+          });
+          if (!authErr && created?.user) {
+            await admin.from("students")
+              .update({ auth_id: created.user.id })
+              .eq("email", student.email);
+          }
+        }));
+      }
+    })().catch((e) => console.error("[admin-students] background auth creation error:", e));
+
+    return res.status(200).json({ ok: true, inserted: students.length });
   }
 
   // ── POST single ───────────────────────────────────────────────
