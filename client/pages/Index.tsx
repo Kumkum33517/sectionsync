@@ -1812,17 +1812,28 @@ function AdminAccessManagement({ state, showToast, setState, currentEmail, sessi
   currentEmail: string;
 }) {
   const [showAdd, setShowAdd] = useState(false);
+  const [confirmingAdd, setConfirmingAdd] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", role: "team" as AdminUser["role"] });
   const [formErr, setFormErr] = useState("");
 
-  const addAdmin = async () => {
+  const validateForm = () => {
     setFormErr("");
-    if (!form.name.trim() || !form.email.trim()) { setFormErr("Name and email are required."); return; }
-    if (!form.email.includes("@")) { setFormErr("Invalid email."); return; }
+    if (!form.name.trim() || !form.email.trim()) { setFormErr("Name and email are required."); return false; }
+    if (!form.email.includes("@")) { setFormErr("Invalid email."); return false; }
     const dup = state.adminUsers.find((a) => a.email.toLowerCase() === form.email.toLowerCase());
-    if (dup) { setFormErr("This email is already in the admin list."); return; }
+    if (dup) { setFormErr("This email is already in the admin list."); return false; }
     const isStudent = state.students.find((s) => s.email.toLowerCase() === form.email.toLowerCase());
-    if (isStudent) { setFormErr("This email belongs to a student. Admin and student lists must not overlap."); return; }
+    if (isStudent) { setFormErr("This email belongs to a student. Admin and student lists must not overlap."); return false; }
+    return true;
+  };
+
+  const addAdmin = async () => {
+    if (!confirmingAdd) {
+      // First click: validate then show confirmation
+      if (validateForm()) setConfirmingAdd(true);
+      return;
+    }
+    // Second click: confirmed — proceed
     try {
       const res = await fetch("/api/admin-admins", {
         method: "POST",
@@ -1830,13 +1841,14 @@ function AdminAccessManagement({ state, showToast, setState, currentEmail, sessi
         body: JSON.stringify({ name: form.name.trim(), email: form.email.trim().toLowerCase(), role: form.role }),
       });
       const data = await res.json();
-      if (!res.ok) { setFormErr(data.error ?? "Failed to add admin."); return; }
+      if (!res.ok) { setFormErr(data.error ?? "Failed to add admin."); setConfirmingAdd(false); return; }
       const newAdmin: AdminUser = { id: data.id ?? `admin-${Date.now()}`, name: form.name.trim(), email: form.email.trim().toLowerCase(), role: form.role, addedAt: new Date().toISOString() };
       setState((p) => ({ ...p, adminUsers: [...p.adminUsers, newAdmin] }));
       showToast(`${form.name} added as admin. Default password: admin@sectionsync1`);
       setForm({ name: "", email: "", role: "team" });
       setShowAdd(false);
-    } catch { setFormErr("Network error. Try again."); }
+      setConfirmingAdd(false);
+    } catch { setFormErr("Network error. Try again."); setConfirmingAdd(false); }
   };
 
   const removeAdmin = async (id: string, email: string) => {
@@ -1889,9 +1901,20 @@ function AdminAccessManagement({ state, showToast, setState, currentEmail, sessi
             </div>
           </div>
           {formErr && <p className="mt-2 text-sm text-red-600 flex items-center gap-1.5"><AlertTriangle size={13} />{formErr}</p>}
+          {confirmingAdd && (
+            <div className="mt-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+              Add <strong>{form.name}</strong> ({form.email}) as admin with default password <code className="bg-amber-100 px-1 rounded">admin@sectionsync1</code>?
+            </div>
+          )}
           <div className="flex gap-2 mt-4">
-            <Btn onClick={addAdmin}><Check size={14} /> Add</Btn>
-            <Btn variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Btn>
+            {!confirmingAdd
+              ? <Btn onClick={addAdmin}><Check size={14} /> Add admin</Btn>
+              : <>
+                  <Btn onClick={addAdmin} variant="primary"><Check size={14} /> Yes, add admin</Btn>
+                  <Btn variant="secondary" onClick={() => setConfirmingAdd(false)}>Go back</Btn>
+                </>
+            }
+            <Btn variant="secondary" onClick={() => { setShowAdd(false); setConfirmingAdd(false); }}>Cancel</Btn>
           </div>
         </Card>
       )}
@@ -2658,6 +2681,12 @@ export default function Index() {
       // Now check for a persisted session — specializations are loaded so
       // handleLogin can resolve chosen_specialization_id UUID to name correctly
       const { data: { session: sbSession } } = await supabase.auth.getSession();
+      // Build the fresh specs list from what we just loaded (not from stale state closure)
+      const freshSpecs: SpecializationDef[] = specsRes.data?.map((s: any) => ({
+        id: s.id, name: s.name, batch: s.batch ?? "2024-25",
+        active: s.active ?? true, description: s.description ?? undefined, createdAt: s.created_at,
+      })) ?? [];
+
       if (sbSession && !session) {
         const em = sbSession.user.email?.toLowerCase() ?? "";
         const tok = sbSession.access_token;
@@ -2672,13 +2701,12 @@ export default function Index() {
               .then((r) => r.ok ? r.json() : null)
               .then((d) => {
                 if (d?.data) {
-                  // specs are already loaded at this point
                   setState((p) => ({
                     ...p,
                     students: d.data.map((s: any) => ({
                       id: s.id, rollNumber: s.roll_number, name: s.name, email: s.email,
                       chosenSpecialization: s.chosen_specialization_id
-                        ? (p.specializations.find((sp) => sp.id === s.chosen_specialization_id)?.name ?? null)
+                        ? (freshSpecs.find((sp) => sp.id === s.chosen_specialization_id)?.name ?? null)
                         : null,
                       assignedSectionId: s.assigned_section_id ?? null,
                       assignedSeat: s.assigned_seat ?? null,
@@ -2688,7 +2716,28 @@ export default function Index() {
                 }
               }).catch(() => {});
           } else {
-            await handleLogin({ role: "student", email: em, accessToken: tok });
+            // Not an admin — check if they're a student before restoring
+            // This blocks deleted admins from getting a blank student dashboard
+            const studentCheck = await fetch("/api/sign-in", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              // We only need to verify they're in the students table, not re-auth
+              // Use a lightweight check: query student existence via the token
+            }).catch(() => null);
+            // Simpler: just call handleLogin — it queries students table via RLS
+            // If student row doesn't exist, handleLogin falls through to setSession(s)
+            // which would give a blank student view. Fix: check if student exists first.
+            const userClient = createClient(
+              import.meta.env.VITE_SUPABASE_URL as string,
+              import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+              { global: { headers: { Authorization: `Bearer ${tok}` } } }
+            );
+            const { data: studentRow } = await userClient
+              .from("students").select("id").eq("email", em).maybeSingle();
+            if (studentRow) {
+              await handleLogin({ role: "student", email: em, accessToken: tok }, freshSpecs);
+            }
+            // else: not admin, not student — deleted user, stay logged out
           }
         } catch {
           // Network error on restore — stay logged out
@@ -2703,10 +2752,10 @@ export default function Index() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const handleLogin = async (s: NonNullable<Session>) => {
+  // specsOverride: pass freshly loaded specs when calling from startup to avoid stale closure
+  const handleLogin = async (s: NonNullable<Session>, specsOverride?: SpecializationDef[]) => {
     if (s.role === "student") {
       try {
-        // Use the user's own access token so RLS allows them to read their row
         const userClient = createClient(
           import.meta.env.VITE_SUPABASE_URL as string,
           import.meta.env.VITE_SUPABASE_ANON_KEY as string,
@@ -2718,9 +2767,10 @@ export default function Index() {
           .eq("email", s.email.toLowerCase())
           .maybeSingle();
         if (data) {
-          // Resolve chosen_specialization_id UUID → spec name for consistent comparisons
+          // Use specsOverride if provided — avoids stale closure when called from startup
+          const specs = specsOverride ?? state.specializations;
           const chosenSpec = data.chosen_specialization_id
-            ? (state.specializations.find((sp) => sp.id === data.chosen_specialization_id)?.name ?? null)
+            ? (specs.find((sp) => sp.id === data.chosen_specialization_id)?.name ?? null)
             : null;
           const student: Student = {
             id:                   data.id,
@@ -2732,12 +2782,28 @@ export default function Index() {
             assignedSeat:         data.assigned_seat ?? null,
             group:                data.group_number ?? null,
           };
-          // Put student in state BEFORE setting session so liveMe resolves on first render
           setState((p) => ({ ...p, students: [student] }));
           setSession({ ...s, studentId: data.id });
+          // Load sections with the student's own token so RLS allows the read
+          void (async () => {
+            try {
+              const { data: secData } = await userClient.from("sections")
+                .select("id, name, capacity, specialization_id, specialization:specialization_id(id,name,batch)")
+                .order("name");
+              if (secData && secData.length > 0) {
+                const sections = secData.map((sec: any) => ({
+                  id: sec.id, name: sec.name, capacity: sec.capacity,
+                  specializationId: sec.specialization_id,
+                  specializationName: sec.specialization?.name ?? "",
+                  occupancy: 0,
+                }));
+                setState((p) => ({ ...p, sections }));
+              }
+            } catch { /* ignore */ }
+          })();
           return;
         }
-      } catch { /* fall through to set session without student data */ }
+      } catch { /* fall through */ }
     }
     setSession(s);
   };
