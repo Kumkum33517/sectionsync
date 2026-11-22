@@ -41,15 +41,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { data: adminRow } = await adminSupabase
     .from("admins").select("id").eq("email", em).maybeSingle();
 
-  if (!adminRow) {
+  if (adminRow) {
+    // Admin login — allow through
+    return res.status(200).json({
+      ok:            true,
+      role:          "admin",
+      access_token:  data.session.access_token,
+      refresh_token: data.session.refresh_token,
+      expires_at:    data.session.expires_at,
+    });
+  }
+
+  // Check if they are an authorized student
+  const { data: studentRow } = await adminSupabase
+    .from("students").select("id, auth_id").eq("email", em).maybeSingle();
+
+  if (!studentRow) {
+    // Email authenticated with Supabase Auth but not in students or admins table
+    // — deleted or unauthorized user, deny access
+    return res.status(401).json({ error: "Incorrect email or password." });
+  }
+
+  // Link auth_id if not set yet
+  if (!studentRow.auth_id) {
     await adminSupabase.from("students")
       .update({ auth_id: data.user.id })
-      .eq("email", em).is("auth_id", null);
+      .eq("email", em);
   }
 
   return res.status(200).json({
     ok:            true,
-    role:          adminRow ? "admin" : "student",
+    role:          "student",
     access_token:  data.session.access_token,
     refresh_token: data.session.refresh_token,
     expires_at:    data.session.expires_at,

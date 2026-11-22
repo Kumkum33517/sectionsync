@@ -225,8 +225,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === "DELETE") {
     const id = req.query.id as string;
     if (!id) return res.status(400).json({ error: "id is required." });
+
+    // Fetch the student's auth_id before deleting so we can remove the auth account
+    const { data: student } = await admin.from("students").select("auth_id, email").eq("id", id).maybeSingle();
+
     const { error } = await admin.from("students").delete().eq("id", id);
     if (error) return res.status(500).json({ error: safeError(error) });
+
+    // Delete the Supabase Auth account so the student cannot sign in anymore
+    if (student?.auth_id) {
+      // @ts-ignore — TS5 type compat
+      await admin.auth.admin.deleteUser(student.auth_id);
+    } else if (student?.email) {
+      // Fallback: look up by email if auth_id wasn't linked
+      // @ts-ignore — TS5 type compat
+      const { data: authUser } = await admin.auth.admin.getUserByEmail(student.email);
+      if (authUser?.user?.id) {
+        // @ts-ignore — TS5 type compat
+        await admin.auth.admin.deleteUser(authUser.user.id);
+      }
+    }
+
     return res.status(200).json({ ok: true });
   }
 
