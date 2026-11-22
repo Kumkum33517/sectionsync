@@ -2426,13 +2426,21 @@ export default function Index() {
       supabase.auth.getSession().then(async ({ data: { session: sbSession } }) => {
         if (sbSession && !session) {
           const em = sbSession.user.email?.toLowerCase() ?? "";
-          // Check role by querying admins table with the restored session
-          const { data: adminRow } = await supabase.from("admins").select("id").eq("email", em).maybeSingle();
-          const role = adminRow ? "admin" : "student";
-          if (role === "student") {
-            await handleLogin({ role: "student", email: em, accessToken: sbSession.access_token });
-          } else {
-            setSession({ role: "admin", email: em, accessToken: sbSession.access_token });
+          const tok = sbSession.access_token;
+          // Detect role via the API (uses service role key — bypasses RLS,
+          // so it works even before the anon client session is fully hydrated)
+          try {
+            const r = await fetch("/api/admin-admins", {
+              headers: { Authorization: `Bearer ${tok}` },
+            });
+            const isAdmin = r.ok;
+            if (isAdmin) {
+              setSession({ role: "admin", email: em, accessToken: tok });
+            } else {
+              await handleLogin({ role: "student", email: em, accessToken: tok });
+            }
+          } catch {
+            // Network error on restore — stay logged out rather than guess role
           }
         }
       });
