@@ -149,7 +149,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data, error } = await admin.from("students")
       .upsert(clean as any, { onConflict: "email", ignoreDuplicates: !replaceAll })
       .select("id, email, roll_number");
-    if (error) return res.status(500).json({ error: safeError(error) });
+    if (error) {
+      console.error("[admin-students] upsert error:", error.code, error.message, error.details);
+      return res.status(500).json({ error: error.message ?? safeError(error) });
+    }
 
     // Fire-and-forget: create auth accounts in background without blocking the response.
     // sign-in.ts handles auth_id linking lazily on first login for any gaps.
