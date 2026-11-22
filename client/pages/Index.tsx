@@ -543,9 +543,10 @@ function AdminDashboard({ state }: { state: AppState }) {
 // ─────────────────────────────────────────────────────────────────
 // ADMIN — Specialization management (dynamic CRUD)
 // ─────────────────────────────────────────────────────────────────
-function AdminSpecializations({ state, showToast, setState }: {
+function AdminSpecializations({ state, showToast, setState, token }: {
   state: AppState;
   showToast: (m: string, err?: boolean) => void;
+  token: string;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
 }) {
   const [showForm, setShowForm] = useState(false);
@@ -572,12 +573,16 @@ function AdminSpecializations({ state, showToast, setState }: {
     if (dup) { setFormErr("A specialization with this name already exists."); return; }
 
 
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
     if (editId) {
-      const { error } = await supabase.from("specializations").update({
-        name: form.name.trim(), batch: form.batch.trim(),
-        description: form.description.trim() || null, active: form.active,
-      }).eq("id", editId);
-      if (error) { setFormErr("Failed to update. Try again."); return; }
+      try {
+        const res = await fetch("/api/admin-specializations", {
+          method: "PUT",
+          headers,
+          body: JSON.stringify({ id: editId, name: form.name.trim(), batch: form.batch.trim(), description: form.description.trim() || null, active: form.active }),
+        });
+        if (!res.ok) { setFormErr("Failed to update. Try again."); return; }
+      } catch { setFormErr("Network error. Try again."); return; }
       setState((p) => ({
         ...p,
         specializations: p.specializations.map((s) =>
@@ -586,18 +591,16 @@ function AdminSpecializations({ state, showToast, setState }: {
       }));
       showToast("Specialization updated.");
     } else {
-      const { data, error } = await supabase.from("specializations").insert({
-        name: form.name.trim(), batch: form.batch.trim(),
-        description: form.description.trim() || null, active: form.active,
-      }).select("id, name, batch, description, active, created_at").single();
-      if (error) { setFormErr("Failed to save. Try again."); return; }
-      const newSpec: SpecializationDef = {
-        id: data.id, name: data.name, batch: data.batch,
-        description: data.description ?? undefined, active: data.active,
-        createdAt: data.created_at,
-      };
-      setState((p) => ({ ...p, specializations: [...p.specializations, newSpec] }));
-      showToast(`"${newSpec.name}" added.`);
+      try {
+        const res = await fetch("/api/admin-specializations", { method: "POST", headers, body: JSON.stringify({ name: form.name.trim(), batch: form.batch.trim(), description: form.description.trim() || null, active: form.active }) });
+        const data = await res.json();
+        if (!res.ok) { setFormErr(data.error ?? "Failed to save. Try again."); return; }
+        // Re-fetch the new spec row to get the generated id
+        const listRes = await fetch("/api/admin-specializations", { headers: { Authorization: `Bearer ${token}` } });
+        const listData = await listRes.json();
+        if (listData.data) setState((p) => ({ ...p, specializations: listData.data.map((s: any) => ({ id: s.id, name: s.name, batch: s.batch, active: s.active, description: s.description ?? undefined, createdAt: s.created_at })) }));
+        showToast(`"${form.name.trim()}" added.`);
+      } catch { setFormErr("Network error. Try again."); return; }
     }
     setShowForm(false);
   };
@@ -605,8 +608,13 @@ function AdminSpecializations({ state, showToast, setState }: {
   const remove = async (id: string, name: string) => {
     const inUse = state.students.some((s) => s.chosenSpecialization === name);
     if (inUse) { showToast(`Cannot remove "${name}" — students have already selected it.`, true); return; }
-    const { error } = await supabase.from("specializations").delete().eq("id", id);
-    if (error) { showToast("Failed to delete. Try again.", true); return; }
+    try {
+      const res = await fetch(`/api/admin-specializations?id=${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) { showToast("Failed to delete. Try again.", true); return; }
+    } catch { showToast("Network error. Try again.", true); return; }
     setState((p) => ({ ...p, specializations: p.specializations.filter((s) => s.id !== id) }));
     showToast(`"${name}" removed.`);
   };
@@ -614,8 +622,14 @@ function AdminSpecializations({ state, showToast, setState }: {
   const toggle = async (id: string) => {
     const spec = state.specializations.find((s) => s.id === id);
     if (!spec) return;
-    const { error } = await supabase.from("specializations").update({ active: !spec.active }).eq("id", id);
-    if (error) { showToast("Failed to update. Try again.", true); return; }
+    try {
+      const res = await fetch("/api/admin-specializations", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ id, active: !spec.active }),
+      });
+      if (!res.ok) { showToast("Failed to update. Try again.", true); return; }
+    } catch { showToast("Network error. Try again.", true); return; }
     setState((p) => ({
       ...p,
       specializations: p.specializations.map((s) => s.id === id ? { ...s, active: !s.active } : s),
@@ -2512,7 +2526,7 @@ export default function Index() {
         {isAdmin && (
           <>
             {adminPage === "dashboard"       && <AdminDashboard state={state} />}
-            {adminPage === "specializations" && <AdminSpecializations state={state} showToast={showToast} setState={setState} />}
+            {adminPage === "specializations" && <AdminSpecializations state={state} showToast={showToast} setState={setState} token={session.accessToken ?? ""} />}
             {adminPage === "spec-window"     && <AdminSpecWindow state={state} showToast={showToast} setState={setState} />}
             {adminPage === "sections"        && <AdminSections state={state} showToast={showToast} setState={setState} />}
             {adminPage === "section-window"  && <AdminSectionWindow state={state} showToast={showToast} setState={setState} />}

@@ -131,7 +131,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         chosen_specialization_id: null,
         assigned_section_id: null,
         assigned_seat: null,
-        group_number: null,
       }).not("id", "is", null);
       // Now delete all rows
       await admin.from("students").delete().not("id", "is", null);
