@@ -151,26 +151,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .select("id, email, roll_number");
     if (error) return res.status(500).json({ error: safeError(error) });
 
-    // Auto-create auth accounts with rollnumber@1234
+    // Auto-create auth accounts in parallel batches of 20 to stay within timeout
+    const BATCH = 20;
     let authCreated = 0;
-    for (const student of data ?? []) {
-      const defaultPassword = `${(student.roll_number as string).toLowerCase()}@1234`;
-      // @ts-ignore — TS5 type compat
-      const { error: authErr } = await admin.auth.admin.createUser({
-        email: student.email as string,
-        password: defaultPassword,
-        email_confirm: true,
-      });
-      if (!authErr) {
-        authCreated++;
+    const students = data ?? [];
+    for (let i = 0; i < students.length; i += BATCH) {
+      const batch = students.slice(i, i + BATCH);
+      await Promise.all(batch.map(async (student) => {
+        const defaultPassword = `${(student.roll_number as string).toLowerCase()}@1234`;
         // @ts-ignore — TS5 type compat
-        const { data: authUser } = await admin.auth.admin.getUserByEmail(student.email as string);
-        if (authUser?.user) {
-          await admin.from("students").update({ auth_id: authUser.user.id }).eq("email", student.email);
+        const { data: created, error: authErr } = await admin.auth.admin.createUser({
+          email: student.email as string,
+          password: defaultPassword,
+          email_confirm: true,
+        });
+        if (!authErr && created?.user) {
+          authCreated++;
+          await admin.from("students")
+            .update({ auth_id: created.user.id })
+            .eq("email", student.email);
         }
-      }
+      }));
     }
-    return res.status(200).json({ ok: true, inserted: data?.length ?? 0, authCreated });
+    return res.status(200).json({ ok: true, inserted: students.length, authCreated });
   }
 
   // ── POST single ───────────────────────────────────────────────
@@ -187,17 +190,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const rollNumber = (fields.roll_number as string ?? "").toLowerCase();
     // @ts-ignore — TS5 type compat
-    const { error: authErr } = await admin.auth.admin.createUser({
+    const { data: createdUser, error: authErr } = await admin.auth.admin.createUser({
       email: fields.email as string,
       password: `${rollNumber}@1234`,
       email_confirm: true,
     });
-    if (!authErr) {
-      // @ts-ignore — TS5 type compat
-      const { data: authUser } = await admin.auth.admin.getUserByEmail(fields.email as string);
-      if (authUser?.user) {
-        await admin.from("students").update({ auth_id: authUser.user.id }).eq("email", fields.email);
-      }
+    if (!authErr && createdUser?.user) {
+      await admin.from("students").update({ auth_id: createdUser.user.id }).eq("email", fields.email);
     }
     return res.status(201).json({ ok: true });
   }
