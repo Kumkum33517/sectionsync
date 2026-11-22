@@ -110,14 +110,23 @@ export async function checkRateLimit(opts: RateLimitOptions): Promise<{ limited:
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Admin verification (shared across all admin routes)
+// Admin verification — with 60s in-process cache to cut round trips
 // ─────────────────────────────────────────────────────────────────
+
+type CachedAdmin = { email: string; userId: string; expiresAt: number };
+const verifyCache = new Map<string, CachedAdmin>();
 
 export async function verifyAdmin(
   req: VercelRequest
 ): Promise<{ error: string } | { email: string; userId: string }> {
   const token = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "").trim();
   if (!token) return { error: "Authentication required." };
+
+  // Return cached result if still valid (avoids 2 Supabase calls per request)
+  const cached = verifyCache.get(token);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { email: cached.email, userId: cached.userId };
+  }
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const supabaseAnon = process.env.VITE_SUPABASE_ANON_KEY;
@@ -144,7 +153,16 @@ export async function verifyAdmin(
     .maybeSingle();
 
   if (!adminRow) return { error: "Admin access required." };
-  return { email: user.email.toLowerCase(), userId: user.id };
+
+  const result = { email: user.email.toLowerCase(), userId: user.id };
+  // Cache for 60 seconds — safe since token validity doesn't change within a minute
+  verifyCache.set(token, { ...result, expiresAt: Date.now() + 60_000 });
+  // Evict old entries to prevent unbounded growth
+  if (verifyCache.size > 100) {
+    const now = Date.now();
+    for (const [k, v] of verifyCache) if (v.expiresAt < now) verifyCache.delete(k);
+  }
+  return result;
 }
 
 // ─────────────────────────────────────────────────────────────────

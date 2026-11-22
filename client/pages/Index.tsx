@@ -2583,7 +2583,16 @@ export default function Index() {
     setSession(s);
   };
 
-  if (!sessionChecked) return null; // wait for session restore before showing login or app
+  if (!sessionChecked) return (
+    <div className="min-h-screen bg-[#f5f6ef] flex items-center justify-center">
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-10 w-10 rounded-xl bg-[#0b1825] flex items-center justify-center animate-pulse">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d8ff5b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12l2 2 4-4"/></svg>
+        </div>
+        <p className="text-sm text-[#71818a]">Loading…</p>
+      </div>
+    </div>
+  );
   if (!session) return <LoginScreen state={state} onLogin={handleLogin} />;
 
   const isAdmin = session.role === "admin";

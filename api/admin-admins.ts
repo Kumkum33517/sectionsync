@@ -11,11 +11,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const admin = await verifyAdmin(req);
   if ("error" in admin) return res.status(403).json(admin);
 
-  const rl = await checkRateLimit({
-    action: "admin_admins", email: admin.email, ip: getIp(req),
-    perEmailLimit: 10, perIpLimit: 20, windowMinutes: 1,
-  });
-  if (rl.limited) return res.status(429).json({ error: rl.message });
 
   if (req.method === "GET") {
     const { data, error } = await adminSupabase
