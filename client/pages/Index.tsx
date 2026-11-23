@@ -1581,13 +1581,35 @@ function AdminStudentList({ state, showToast, setState, session }: {
     setDeletingAll(true);
     const tok = await getToken();
     try {
+      // Delete all students
       const res = await fetch("/api/admin-students?deleteAll=1", {
         method: "DELETE",
         headers: { Authorization: `Bearer ${tok}` },
       });
       if (!res.ok) { const d = await res.json(); showToast(d.error ?? "Failed to delete.", true); return; }
-      setState((p) => ({ ...p, students: [] }));
-      showToast("All students deleted.");
+
+      // Delete all sections (cascades to seats via ON DELETE CASCADE in DB)
+      await fetch("/api/admin-sections?deleteAll=1", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${tok}` },
+      });
+
+      // Reset phase back to SPEC_WINDOW_OPEN (fresh start)
+      await fetch("/api/admin-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
+        body: JSON.stringify({ phase: "SPEC_WINDOW_OPEN" }),
+      });
+
+      setState((p) => ({
+        ...p,
+        students: [],
+        sections: [],
+        phase: "SPEC_WINDOW_OPEN",
+        specWindowStatus: "OPEN",
+        sectionWindowStatus: "CLOSED",
+      }));
+      showToast("All students, sections, and seat allocations deleted.");
       setConfirmDeleteAll(false);
     } catch { showToast("Network error.", true); }
     setDeletingAll(false);
@@ -1627,9 +1649,9 @@ function AdminStudentList({ state, showToast, setState, session }: {
         <Btn variant="secondary" onClick={downloadTemplate}><Download size={14} /> Excel template</Btn>
         {!confirmDeleteAll
           ? <Btn variant="danger" onClick={() => setConfirmDeleteAll(true)} disabled={state.students.length === 0}><Trash2 size={14} /> Delete entire list</Btn>
-          : <div className="flex items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm">
-              <span className="text-red-700 font-medium">Delete all {state.students.length} students?</span>
-              <Btn variant="danger" onClick={deleteAllStudents} disabled={deletingAll}>{deletingAll ? "Deleting…" : "Yes, delete all"}</Btn>
+          : <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm">
+              <span className="text-red-700 font-medium">Delete all {state.students.length} students, sections, groups &amp; seats?</span>
+              <Btn variant="danger" onClick={deleteAllStudents} disabled={deletingAll}>{deletingAll ? "Deleting…" : "Yes, delete everything"}</Btn>
               <Btn variant="secondary" onClick={() => setConfirmDeleteAll(false)}>Cancel</Btn>
             </div>
         }

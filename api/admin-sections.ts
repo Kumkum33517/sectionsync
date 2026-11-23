@@ -54,6 +54,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ ok: true });
   }
 
+  // ── DELETE ALL sections (called when student list is wiped) ──────
+  if (req.method === "DELETE" && req.query.deleteAll === "1") {
+    // Delete seats first, then sections
+    await adminSupabase.from("seats").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    const { error } = await adminSupabase.from("sections").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    if (error) return res.status(500).json({ error: safeError(error) });
+    return res.status(200).json({ ok: true });
+  }
+
   if (req.method === "DELETE") {
     const id = req.query.id as string;
     if (!id) return res.status(400).json({ error: "id is required." });
