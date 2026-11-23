@@ -2698,7 +2698,12 @@ export default function Index() {
   const [sessionChecked, setSessionChecked] = useState(false); // true once we know if a session exists
   const [state, setState]           = useState<AppState>(() => createInitialData());
   const [adminPage, setAdminPage]   = useState<AdminPage>("dashboard");
-  const [studentPage, setStudentPage] = useState<StudentPage>("dashboard");
+  const [studentPage, setStudentPage] = useState<StudentPage>(() => {
+    // Restore page on refresh; sessionStorage clears on new tab/window so new logins start at dashboard
+    const saved = sessionStorage.getItem("studentPage") as StudentPage | null;
+    const valid: StudentPage[] = ["dashboard","spec-selection","section-seat","swaps","change-password"];
+    return saved && valid.includes(saved) ? saved : "dashboard";
+  });
   const [toast, setToast]           = useState<Toast>(null);
 
   // Load all data from Supabase on startup
@@ -2878,6 +2883,14 @@ export default function Index() {
     setSession(s);
   };
 
+  // Persist current student page so refresh returns to the same page
+  // (sessionStorage is cleared when the browser tab is closed, so new logins start fresh)
+  useEffect(() => {
+    if (session?.role === "student") {
+      sessionStorage.setItem("studentPage", studentPage);
+    }
+  }, [studentPage, session]);
+
   if (!sessionChecked) return (
     <div className="min-h-screen bg-[#f5f6ef] flex items-center justify-center">
       <div className="flex flex-col items-center gap-3">
@@ -2907,6 +2920,7 @@ export default function Index() {
           setSession(null);
           setAdminPage("dashboard");
           setStudentPage("dashboard");
+          sessionStorage.removeItem("studentPage");
         }}
       >
         {isAdmin && (
