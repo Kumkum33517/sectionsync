@@ -163,12 +163,12 @@ export function autoCreateSections(
   for (const spec of specializations.filter((s) => s.active)) {
     const count = students.filter((s) => s.chosenSpecialization === spec.name).length;
     const capacities = computeSectionCapacities(count);
-    capacities.forEach((_, i) => {
+    capacities.forEach((cap, i) => {
       sections.push({
         id: `${spec.id}-sec-${i}`,
         specializationName: spec.name,
         name: `${specAbbrev(spec.name)}-${SECTION_NAMES[i] ?? i + 1}`,
-        capacity: 0, // admin sets capacity manually
+        capacity: cap, // pre-filled from student distribution, admin can adjust
       });
     });
   }

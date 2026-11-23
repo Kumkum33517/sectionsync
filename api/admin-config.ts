@@ -106,7 +106,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const base = Math.floor(count / n);
       const rem  = count % n;
       for (let i = 0; i < n; i++) {
-        toInsert.push({ specialization_id: spec.id, name: `${specAbbrev(spec.name)}-${SECTION_NAMES[i] ?? i+1}`, capacity: 0 });
+        // capacity = actual student count for this section (rem sections get +1)
+        const cap = i < rem ? base + 1 : base;
+        toInsert.push({ specialization_id: spec.id, name: `${specAbbrev(spec.name)}-${SECTION_NAMES[i] ?? i+1}`, capacity: cap });
       }
     }
     if (!toInsert.length) return res.status(400).json({ error: "No student specialization selections found." });
