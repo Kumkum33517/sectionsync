@@ -1575,42 +1575,51 @@ function AdminStudentList({ state, showToast, setState, session }: {
   };
 
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [confirmDeleteEverything, setConfirmDeleteEverything] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
 
+  // Delete only students (sections/groups/seats stay)
   const deleteAllStudents = async () => {
     setDeletingAll(true);
     const tok = await getToken();
     try {
-      // Delete all students
       const res = await fetch("/api/admin-students?deleteAll=1", {
         method: "DELETE",
         headers: { Authorization: `Bearer ${tok}` },
       });
       if (!res.ok) { const d = await res.json(); showToast(d.error ?? "Failed to delete.", true); return; }
+      setState((p) => ({ ...p, students: [] }));
+      showToast("All students deleted.");
+      setConfirmDeleteAll(false);
+    } catch { showToast("Network error.", true); }
+    setDeletingAll(false);
+  };
 
-      // Delete all sections (cascades to seats via ON DELETE CASCADE in DB)
+  // Delete students + sections + groups + seats + reset phase
+  const deleteEverything = async () => {
+    setDeletingAll(true);
+    const tok = await getToken();
+    try {
+      const res = await fetch("/api/admin-students?deleteAll=1", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${tok}` },
+      });
+      if (!res.ok) { const d = await res.json(); showToast(d.error ?? "Failed to delete.", true); return; }
       await fetch("/api/admin-sections?deleteAll=1", {
         method: "DELETE",
         headers: { Authorization: `Bearer ${tok}` },
       });
-
-      // Reset phase back to SPEC_WINDOW_OPEN (fresh start)
       await fetch("/api/admin-config", {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
         body: JSON.stringify({ phase: "SPEC_WINDOW_OPEN" }),
       });
-
       setState((p) => ({
-        ...p,
-        students: [],
-        sections: [],
-        phase: "SPEC_WINDOW_OPEN",
-        specWindowStatus: "OPEN",
-        sectionWindowStatus: "CLOSED",
+        ...p, students: [], sections: [],
+        phase: "SPEC_WINDOW_OPEN", specWindowStatus: "OPEN", sectionWindowStatus: "CLOSED",
       }));
-      showToast("All students, sections, and seat allocations deleted.");
-      setConfirmDeleteAll(false);
+      showToast("All students, sections, groups and seats deleted.");
+      setConfirmDeleteEverything(false);
     } catch { showToast("Network error.", true); }
     setDeletingAll(false);
   };
@@ -1647,14 +1656,32 @@ function AdminStudentList({ state, showToast, setState, session }: {
           <p className="text-sm text-[#71818a] mt-0.5">{state.students.length} authorized students</p>
         </div>
         <Btn variant="secondary" onClick={downloadTemplate}><Download size={14} /> Excel template</Btn>
-        {!confirmDeleteAll
-          ? <Btn variant="danger" onClick={() => setConfirmDeleteAll(true)} disabled={state.students.length === 0}><Trash2 size={14} /> Delete entire list</Btn>
-          : <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm">
-              <span className="text-red-700 font-medium">Delete all {state.students.length} students, sections, groups &amp; seats?</span>
-              <Btn variant="danger" onClick={deleteAllStudents} disabled={deletingAll}>{deletingAll ? "Deleting…" : "Yes, delete everything"}</Btn>
-              <Btn variant="secondary" onClick={() => setConfirmDeleteAll(false)}>Cancel</Btn>
-            </div>
-        }
+        {/* Delete entire list (students only) */}
+        {!confirmDeleteAll && !confirmDeleteEverything && (
+          <Btn variant="danger" onClick={() => setConfirmDeleteAll(true)} disabled={state.students.length === 0}>
+            <Trash2 size={14} /> Delete entire list
+          </Btn>
+        )}
+        {confirmDeleteAll && (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm">
+            <span className="text-red-700 font-medium">Delete all {state.students.length} students?</span>
+            <Btn variant="danger" onClick={deleteAllStudents} disabled={deletingAll}>{deletingAll ? "Deleting…" : "Confirm"}</Btn>
+            <Btn variant="secondary" onClick={() => setConfirmDeleteAll(false)}>Cancel</Btn>
+          </div>
+        )}
+        {/* Delete everything (students + sections + groups + seats) */}
+        {!confirmDeleteAll && !confirmDeleteEverything && (
+          <Btn variant="danger" onClick={() => setConfirmDeleteEverything(true)} disabled={state.students.length === 0 && state.sections.length === 0}>
+            <Trash2 size={14} /> Delete all (students + sections + groups &amp; seats)
+          </Btn>
+        )}
+        {confirmDeleteEverything && (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm">
+            <span className="text-red-700 font-medium">Delete all {state.students.length} students, sections, groups &amp; seats? This cannot be undone.</span>
+            <Btn variant="danger" onClick={deleteEverything} disabled={deletingAll}>{deletingAll ? "Deleting…" : "Confirm"}</Btn>
+            <Btn variant="secondary" onClick={() => setConfirmDeleteEverything(false)}>Cancel</Btn>
+          </div>
+        )}
         <Btn variant="primary" onClick={openAdd}><Plus size={14} /> Add student</Btn>
       </div>
 
