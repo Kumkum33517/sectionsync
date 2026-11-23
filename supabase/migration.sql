@@ -91,6 +91,7 @@ create table if not exists public.students (
   chosen_specialization_id  uuid        references public.specializations(id) on delete set null,
   assigned_section_id       uuid        references public.sections(id)        on delete set null,
   assigned_seat             int,
+  group_number              int,          -- 1 = G1, 2 = G2, assigned when section window closes
   created_at                timestamptz not null default now(),
   updated_at                timestamptz not null default now()
 );

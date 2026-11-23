@@ -1129,6 +1129,18 @@ function AdminSectionWindow({ state, showToast, setState, session }: {
     const g1 = Object.values(updates).filter((g) => g === 1).length;
     const g2 = Object.values(updates).filter((g) => g === 2).length;
     showToast(`Window closed. Groups assigned: G1 = ${g1}, G2 = ${g2}.`);
+    // Persist group assignments to DB in background
+    void (async () => {
+      try {
+        await Promise.all(Object.entries(updates).map(([studentId, group]) =>
+          fetch("/api/admin-students", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+            body: JSON.stringify({ id: studentId, group_number: group }),
+          })
+        ));
+      } catch { /* non-critical — groups will be recalculated if needed */ }
+    })();
   };
 
   const exportExcel = () => downloadAllocationExcel(state);
@@ -2146,9 +2158,10 @@ function StudentSpecSelection({ me, state, showToast, setState, session }: {
 // ─────────────────────────────────────────────────────────────────
 // STUDENT — Section + Seat selection
 // ─────────────────────────────────────────────────────────────────
-function StudentSectionSeat({ me, state, showToast, setState }: {
+function StudentSectionSeat({ me, state, showToast, setState, session }: {
   me: Student; state: AppState;
   showToast: (m: string, err?: boolean) => void;
+  session: NonNullable<Session>;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
 }) {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(me.assignedSectionId);
@@ -2192,15 +2205,25 @@ function StudentSectionSeat({ me, state, showToast, setState }: {
   const taken      = takenSeats(preview, state.students);
   const studentsIn = state.students.filter((s) => s.assignedSectionId === preview.id);
 
-  const confirmSeat = (seat: number) => {
+  const confirmSeat = async (seat: number) => {
     if (!isOpen) { showToast("Section selection is closed.", true); return; }
     if (taken.includes(seat) && !(me.assignedSectionId === preview.id && me.assignedSeat === seat)) {
       showToast("That seat is already taken.", true); return;
     }
-    setState((p) => ({
-      ...p, students: p.students.map((s) => s.id === me.id ? { ...s, assignedSectionId: preview.id, assignedSeat: seat } : s),
-    }));
-    showToast(`Seat ${seat} in ${preview.name} confirmed!`);
+    try {
+      const res = await fetch("/api/book-seat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+        body: JSON.stringify({ section_id: preview.id, seat_number: seat }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showToast(data.error ?? "Booking failed. Try again.", true); return; }
+      // Update local state so dashboard reflects immediately
+      setState((p) => ({
+        ...p, students: p.students.map((s) => s.id === me.id ? { ...s, assignedSectionId: preview.id, assignedSeat: seat } : s),
+      }));
+      showToast(`Seat ${seat} in ${preview.name} confirmed!`);
+    } catch { showToast("Network error. Try again.", true); }
   };
 
   const COLS = 10;
@@ -2632,11 +2655,14 @@ export default function Index() {
   // Load all data from Supabase on startup
   useEffect(() => {
     (async () => {
-      // Load specializations and system config in parallel FIRST so they're
-      // available before session restore tries to resolve spec UUIDs to names
-      const [specsRes, configRes] = await Promise.all([
+      // Load specializations, config, and sections in parallel FIRST so they're
+      // all available before session restore — prevents race conditions
+      const [specsRes, configRes, sectionsRes] = await Promise.all([
         supabase.from("specializations").select("*").order("name"),
         supabase.from("system_config").select("*").eq("id", 1).single(),
+        supabase.from("sections")
+          .select("id, name, capacity, specialization_id, specialization:specialization_id(id,name,batch)")
+          .order("name"),
       ]);
 
       if (specsRes.data && specsRes.data.length > 0) {
@@ -2662,23 +2688,18 @@ export default function Index() {
         }));
       }
 
-      // Load sections from DB
-      supabase.from("sections")
-        .select("id, name, capacity, specialization_id, specialization:specialization_id(id,name,batch)")
-        .order("name")
-        .then(({ data: secData }) => {
-          if (secData && secData.length > 0) {
-            const sections = secData.map((s: any) => ({
-              id: s.id, name: s.name, capacity: s.capacity,
-              specializationId: s.specialization_id,
-              specializationName: s.specialization?.name ?? "",
-              occupancy: 0,
-            }));
-            setState((p) => ({ ...p, sections }));
-          }
-        });
+      // Load sections from the parallel result
+      if (sectionsRes.data && sectionsRes.data.length > 0) {
+        const sections = sectionsRes.data.map((s: any) => ({
+          id: s.id, name: s.name, capacity: s.capacity,
+          specializationId: s.specialization_id,
+          specializationName: s.specialization?.name ?? "",
+          occupancy: 0,
+        }));
+        setState((p) => ({ ...p, sections }));
+      }
 
-      // Now check for a persisted session — specializations are loaded so
+      // Now check for a persisted session — all data is loaded so
       // handleLogin can resolve chosen_specialization_id UUID to name correctly
       const { data: { session: sbSession } } = await supabase.auth.getSession();
       // Build the fresh specs list from what we just loaded (not from stale state closure)
@@ -2856,7 +2877,7 @@ export default function Index() {
           <>
             {studentPage === "dashboard"      && <StudentDashboard me={liveMe} state={state} />}
             {studentPage === "spec-selection" && <StudentSpecSelection me={liveMe} state={state} showToast={showToast} setState={setState} session={session} />}
-            {studentPage === "section-seat"   && <StudentSectionSeat me={liveMe} state={state} showToast={showToast} setState={setState} />}
+            {studentPage === "section-seat"   && <StudentSectionSeat me={liveMe} state={state} showToast={showToast} setState={setState} session={session} />}
             {studentPage === "swaps"          && <StudentSwapRequests me={liveMe} state={state} showToast={showToast} setState={setState} />}
             {studentPage === "change-password" && <ChangePasswordPage session={session} showToast={showToast} />}
           </>

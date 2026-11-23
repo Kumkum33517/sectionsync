@@ -83,7 +83,7 @@ async function checkRate(email: string, ip: string): Promise<boolean> {
 // ── Field allowlists ─────────────────────────────────────────────
 const ALLOWED_INSERT = ["roll_number", "name", "email", "year"] as const;
 const ALLOWED_UPDATE = ["name", "roll_number", "year",
-  "chosen_specialization_id", "assigned_section_id", "assigned_seat"] as const;
+  "chosen_specialization_id", "assigned_section_id", "assigned_seat", "group_number"] as const;
 
 function pickInsert(body: Record<string, unknown>) {
   return Object.fromEntries(ALLOWED_INSERT.filter((k) => k in body).map((k) => [k, body[k]]));
@@ -108,7 +108,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // ── GET ────────────────────────────────────────────────────────
   if (req.method === "GET") {
     const { data, error } = await admin.from("students")
-      .select("id, roll_number, name, email, year, assigned_seat, chosen_specialization_id, assigned_section_id, specialization:chosen_specialization_id(id,name), section:assigned_section_id(id,name)")
+      .select("id, roll_number, name, email, year, assigned_seat, group_number, chosen_specialization_id, assigned_section_id, specialization:chosen_specialization_id(id,name), section:assigned_section_id(id,name)")
       .order("roll_number");
     if (error) return res.status(500).json({ error: safeError(error) });
     return res.status(200).json({ data });
