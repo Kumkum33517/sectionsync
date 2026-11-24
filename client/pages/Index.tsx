@@ -2588,94 +2588,140 @@ function StudentSectionSeat({ me, state, showToast, setState, session }: {
 // ─────────────────────────────────────────────────────────────────
 // STUDENT — Swap Requests
 // ─────────────────────────────────────────────────────────────────
-function StudentSwapRequests({ me, state, showToast, setState }: {
+function StudentSwapRequests({ me, state, showToast, setState, session }: {
   me: Student;
   state: AppState;
   showToast: (m: string, err?: boolean) => void;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
+  session: NonNullable<Session>;
 }) {
   const [targetId, setTargetId] = useState("");
   const [note, setNote] = useState("");
   const [tab, setTab] = useState<"sent" | "received">("sent");
-  // pendingAction holds the swap+type awaiting explicit confirmation
   const [pendingAction, setPendingAction] = useState<{ type: "accept" | "reject" | "cancel"; req: SwapRequest } | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const isOpen = state.phase === "SECTION_WINDOW_OPEN";
+  const isOpen = state.phase === "SECTION_WINDOW_OPEN" && !state.sectionWindowNewOnly;
   const mySection = state.sections.find((s) => s.id === me.assignedSectionId);
+
+  // ── Load swap requests from DB on mount and subscribe realtime ──
+  useEffect(() => {
+    if (!me.id) return;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/student-swaps", {
+          headers: { Authorization: `Bearer ${session.accessToken ?? ""}` },
+        });
+        if (!res.ok) return;
+        const { data } = await res.json();
+        const reqs: SwapRequest[] = (data ?? []).map((r: any) => ({
+          id: r.id,
+          requesterId: r.requester_id,
+          targetId: r.target_id,
+          requesterSectionId: r.requester_section_id ?? null,
+          targetSectionId: r.target_section_id ?? null,
+          status: r.status as SwapStatus,
+          note: r.note ?? undefined,
+          createdAt: r.created_at,
+          resolvedAt: r.resolved_at ?? undefined,
+        }));
+        setState((p) => ({ ...p, swapRequests: reqs }));
+      } catch { /* ignore */ }
+    };
+    load();
+
+    // Realtime: update when any swap request involving this student changes
+    const channel = supabase
+      .channel(`swap-requests-${me.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "swap_requests" }, () => {
+        load(); // re-fetch on any change — simple and correct
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [me.id]);
 
   const sent     = state.swapRequests.filter((r) => r.requesterId === me.id);
   const received = state.swapRequests.filter((r) => r.targetId === me.id && r.status === "PENDING");
-
   const hasPending = sent.some((r) => r.status === "PENDING");
 
-  const sendRequest = (e: FormEvent) => {
+  const sendRequest = async (e: FormEvent) => {
     e.preventDefault();
     if (!isOpen) { showToast("Section window is closed. Swaps are not allowed.", true); return; }
     if (!me.assignedSectionId) { showToast("You haven't selected a section yet.", true); return; }
     if (!targetId) { showToast("Select a student to swap with.", true); return; }
     if (hasPending) { showToast("You already have a pending swap request.", true); return; }
-    const target = state.students.find((s) => s.id === targetId);
-    if (!target) { showToast("Student not found.", true); return; }
-    if (!target.assignedSectionId) { showToast("That student hasn't selected a section yet.", true); return; }
-    if (target.assignedSectionId === me.assignedSectionId) { showToast("You're already in the same section.", true); return; }
-    if (target.chosenSpecialization !== me.chosenSpecialization) {
-      showToast("You can only swap with students in the same specialization.", true); return;
-    }
-
-    const req: SwapRequest = {
-      id: `swap-${Date.now()}`,
-      requesterId: me.id,
-      targetId,
-      requesterSectionId: me.assignedSectionId,
-      targetSectionId: target.assignedSectionId,
-      status: "PENDING",
-      note: note.trim() || undefined,
-      createdAt: new Date().toISOString(),
-    };
-    setState((p) => ({ ...p, swapRequests: [req, ...p.swapRequests] }));
-    setTargetId(""); setNote("");
-    showToast("Swap request sent.");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/student-swaps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+        body: JSON.stringify({ target_id: targetId, note: note.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showToast(data.error ?? "Failed to send request.", true); setLoading(false); return; }
+      // Reload from DB so both students see it
+      const listRes = await fetch("/api/student-swaps", { headers: { Authorization: `Bearer ${session.accessToken ?? ""}` } });
+      if (listRes.ok) {
+        const { data: reqs } = await listRes.json();
+        setState((p) => ({ ...p, swapRequests: (reqs ?? []).map((r: any) => ({
+          id: r.id, requesterId: r.requester_id, targetId: r.target_id,
+          requesterSectionId: r.requester_section_id ?? null, targetSectionId: r.target_section_id ?? null,
+          status: r.status, note: r.note ?? undefined, createdAt: r.created_at, resolvedAt: r.resolved_at ?? undefined,
+        })) }));
+      }
+      setTargetId(""); setNote("");
+      showToast("Swap request sent.");
+    } catch { showToast("Network error. Try again.", true); }
+    setLoading(false);
   };
 
-  const acceptSwap = (req: SwapRequest) => {
-    if (!isOpen) { showToast("Section window is closed.", true); return; }
-    const requester = state.students.find((s) => s.id === req.requesterId);
-    if (!requester || !requester.assignedSectionId || !me.assignedSectionId) {
-      showToast("Cannot complete swap — one of you hasn't selected a section.", true); return;
-    }
-    // Swap sections and seats atomically in local state
-    setState((p) => ({
-      ...p,
-      students: p.students.map((s) => {
-        if (s.id === me.id) return { ...s, assignedSectionId: requester.assignedSectionId, assignedSeat: requester.assignedSeat };
-        if (s.id === requester.id) return { ...s, assignedSectionId: me.assignedSectionId!, assignedSeat: me.assignedSeat };
-        return s;
-      }),
-      swapRequests: p.swapRequests.map((r) =>
-        r.id === req.id ? { ...r, status: "ACCEPTED" as SwapStatus, resolvedAt: new Date().toISOString() } : r
-      ),
-    }));
-    showToast("Swap completed! Your sections have been exchanged.");
-  };
+  const executeAction = async (type: "accept" | "reject" | "cancel", req: SwapRequest) => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/student-swaps", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+        body: JSON.stringify({ id: req.id, action: type }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showToast(data.error ?? "Action failed. Try again.", true); setLoading(false); return; }
 
-  const rejectSwap = (req: SwapRequest) => {
-    setState((p) => ({
-      ...p,
-      swapRequests: p.swapRequests.map((r) =>
-        r.id === req.id ? { ...r, status: "REJECTED" as SwapStatus, resolvedAt: new Date().toISOString() } : r
-      ),
-    }));
-    showToast("Swap request declined.");
-  };
+      if (type === "accept") {
+        // Reload own student record since section changed
+        const userClient = createClient(
+          import.meta.env.VITE_SUPABASE_URL as string,
+          import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+          { global: { headers: { Authorization: `Bearer ${session.accessToken ?? ""}` } } }
+        );
+        const { data: fresh } = await userClient
+          .from("students")
+          .select("assigned_section_id, assigned_seat, group_number, section:assigned_section_id(id,name)")
+          .eq("id", me.id).maybeSingle();
+        if (fresh) {
+          setState((p) => ({ ...p, students: p.students.map((s) => s.id === me.id ? {
+            ...s,
+            assignedSectionId: (fresh as any).assigned_section_id ?? null,
+            assignedSectionName: (fresh as any).section?.name ?? null,
+            assignedSeat: (fresh as any).assigned_seat ?? null,
+            group: (fresh as any).group_number ?? null,
+          } : s) }));
+        }
+        showToast("Swap accepted! Your sections have been exchanged.");
+      } else {
+        showToast(type === "reject" ? "Swap request declined." : "Swap request cancelled.");
+      }
 
-  const cancelSwap = (req: SwapRequest) => {
-    setState((p) => ({
-      ...p,
-      swapRequests: p.swapRequests.map((r) =>
-        r.id === req.id ? { ...r, status: "CANCELLED" as SwapStatus, resolvedAt: new Date().toISOString() } : r
-      ),
-    }));
-    showToast("Swap request cancelled.");
+      // Update the swap request status locally
+      setState((p) => ({
+        ...p,
+        swapRequests: p.swapRequests.map((r) =>
+          r.id === req.id ? { ...r, status: type === "accept" ? "ACCEPTED" : type === "reject" ? "REJECTED" : "CANCELLED" as SwapStatus, resolvedAt: new Date().toISOString() } : r
+        ),
+      }));
+      setPendingAction(null);
+    } catch { showToast("Network error. Try again.", true); }
+    setLoading(false);
   };
 
   const statusBadge = (s: SwapStatus) => {
@@ -2689,7 +2735,7 @@ function StudentSwapRequests({ me, state, showToast, setState }: {
     return <Badge color={color}>{label}</Badge>;
   };
 
-  // Students eligible to swap with: same spec, different section, has a seat
+  // Eligible targets: same spec, different section, has a seat — from the peers loaded at login
   const eligibleTargets = state.students.filter(
     (s) => s.id !== me.id
       && s.chosenSpecialization === me.chosenSpecialization
@@ -2697,36 +2743,15 @@ function StudentSwapRequests({ me, state, showToast, setState }: {
       && s.assignedSectionId !== me.assignedSectionId
   );
 
-
-  // ── Resolve pendingAction ──────────────────────────────────────
-  const executePending = () => {
-    if (!pendingAction) return;
-    const { type, req } = pendingAction;
-    if (type === "accept") acceptSwap(req);
-    else if (type === "reject") rejectSwap(req);
-    else cancelSwap(req);
-    setPendingAction(null);
+  const dialogMeta: Record<"accept" | "reject" | "cancel", { title: string; body: string; label: string; variant: "primary" | "danger" | "lime" }> = {
+    accept: { title: "Accept this swap?", body: "Your sections will be exchanged immediately. This cannot be undone.", label: "Yes, accept swap", variant: "primary" },
+    reject: { title: "Decline this swap request?", body: "The other student will be notified that you declined.", label: "Decline", variant: "danger" },
+    cancel: { title: "Cancel your swap request?", body: "Your outgoing swap request will be withdrawn.", label: "Yes, cancel it", variant: "danger" },
   };
 
-  const dialogMeta: Record<"accept" | "reject" | "cancel", { title: string; body: string; label: string; variant: "primary" | "danger" | "lime" }> = {
-    accept: {
-      title: "Accept this swap?",
-      body: "Your sections will be exchanged immediately. This cannot be undone.",
-      label: "Yes, accept swap",
-      variant: "primary",
-    },
-    reject: {
-      title: "Decline this swap request?",
-      body: "The other student will be notified that you declined.",
-      label: "Decline",
-      variant: "danger",
-    },
-    cancel: {
-      title: "Cancel your swap request?",
-      body: "Your outgoing swap request will be withdrawn.",
-      label: "Yes, cancel it",
-      variant: "danger",
-    },
+  const executePending = () => {
+    if (!pendingAction) return;
+    executeAction(pendingAction.type, pendingAction.req);
   };
 
   return (
@@ -2746,7 +2771,6 @@ function StudentSwapRequests({ me, state, showToast, setState }: {
         </div>
       )}
 
-      {/* Current section */}
       {mySection && (
         <div className="rounded-xl bg-[#f9faf3] border border-[#eef0e4] px-4 py-3 text-sm flex items-center justify-between">
           <span className="text-[#71818a]">Your current section</span>
@@ -2754,34 +2778,37 @@ function StudentSwapRequests({ me, state, showToast, setState }: {
         </div>
       )}
 
-      {/* Send request */}
       {isOpen && me.assignedSectionId && !hasPending && (
         <Card className="p-5">
           <h3 className="font-semibold text-[#0b1825] mb-4">Send swap request</h3>
-          <form onSubmit={sendRequest} className="space-y-3">
-            <div>
-              <label className="block text-xs text-[#71818a] mb-1">Student to swap with</label>
-              <select value={targetId} onChange={(e) => setTargetId(e.target.value)}
-                className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-3 py-2.5 text-sm outline-none focus:border-[#0b1825]">
-                <option value="">Select a student…</option>
-                {eligibleTargets.map((s) => {
-                  const sec = state.sections.find((sc) => sc.id === s.assignedSectionId);
-                  return (
-                    <option key={s.id} value={s.id}>
-                      {s.name} — {sec?.name ?? "unknown section"}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-[#71818a] mb-1">Note (optional)</label>
-              <input value={note} onChange={(e) => setNote(e.target.value)}
-                placeholder="Why do you want to swap?"
-                className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-3 py-2.5 text-sm outline-none focus:border-[#0b1825]" />
-            </div>
-            <Btn type="submit" disabled={!targetId}><ArrowLeftRight size={14} /> Send swap request</Btn>
-          </form>
+          {eligibleTargets.length === 0 ? (
+            <p className="text-sm text-[#71818a]">No eligible students to swap with right now. Students must be in a different section of the same specialization.</p>
+          ) : (
+            <form onSubmit={sendRequest} className="space-y-3">
+              <div>
+                <label className="block text-xs text-[#71818a] mb-1">Student to swap with</label>
+                <select value={targetId} onChange={(e) => setTargetId(e.target.value)}
+                  className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-3 py-2.5 text-sm outline-none focus:border-[#0b1825]">
+                  <option value="">Select a student…</option>
+                  {eligibleTargets.map((s) => {
+                    const sec = state.sections.find((sc) => sc.id === s.assignedSectionId);
+                    return (
+                      <option key={s.id} value={s.id}>
+                        {s.name} — {sec?.name ?? "unknown section"}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-[#71818a] mb-1">Note (optional)</label>
+                <input value={note} onChange={(e) => setNote(e.target.value)}
+                  placeholder="Why do you want to swap?"
+                  className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-3 py-2.5 text-sm outline-none focus:border-[#0b1825]" />
+              </div>
+              <Btn type="submit" disabled={!targetId || loading}><ArrowLeftRight size={14} /> Send swap request</Btn>
+            </form>
+          )}
         </Card>
       )}
 
@@ -2791,7 +2818,6 @@ function StudentSwapRequests({ me, state, showToast, setState }: {
         </div>
       )}
 
-      {/* Tabs */}
       <div className="flex gap-4 border-b border-[#dde4cc]">
         {(["sent", "received"] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)}
@@ -2810,7 +2836,7 @@ function StudentSwapRequests({ me, state, showToast, setState }: {
             return (
               <Card key={req.id} className="p-4 flex items-center gap-4">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-[#0b1825]">{target?.name ?? "Unknown"}</p>
+                  <p className="text-sm font-semibold text-[#0b1825]">{target?.name ?? "Student"}</p>
                   <p className="text-xs text-[#71818a]">Their section: {targetSec?.name ?? "—"}</p>
                   {req.note && <p className="text-xs text-[#71818a] italic mt-0.5">"{req.note}"</p>}
                 </div>
@@ -2835,7 +2861,7 @@ function StudentSwapRequests({ me, state, showToast, setState }: {
               <Card key={req.id} className="p-4 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-[#0b1825]">{requester?.name ?? "Unknown"}</p>
+                    <p className="text-sm font-semibold text-[#0b1825]">{requester?.name ?? "Student"}</p>
                     <p className="text-xs text-[#71818a]">Their section: {reqSec?.name ?? "—"}</p>
                     {req.note && <p className="text-xs text-[#71818a] italic mt-0.5">"{req.note}"</p>}
                   </div>
@@ -3111,7 +3137,10 @@ export default function Index() {
           };
           setState((p) => ({ ...p, students: [student] }));
           setSession({ ...s, studentId: data.id });
-          // Load sections with the student's own token so RLS allows the read
+          // Always land on dashboard after a fresh login (not a page refresh)
+          setStudentPage("dashboard");
+          sessionStorage.removeItem("studentPage");
+          // Load sections + all peers in same specialization, then subscribe realtime
           void (async () => {
             try {
               const { data: secData } = await userClient.from("sections")
@@ -3125,6 +3154,76 @@ export default function Index() {
                   occupancy: 0,
                 }));
                 setState((p) => ({ ...p, sections }));
+              }
+            } catch { /* ignore */ }
+
+            // Load all peers in the same specialization so the seat map shows real occupancy
+            try {
+              if (data.chosen_specialization_id) {
+                const { data: peers } = await userClient
+                  .from("students")
+                  .select("id, name, roll_number, email, chosen_specialization_id, assigned_section_id, assigned_seat, group_number")
+                  .eq("chosen_specialization_id", data.chosen_specialization_id);
+                if (peers && peers.length > 0) {
+                  const specs = specsOverride ?? state.specializations;
+                  const peerStudents = peers.map((p: any) => ({
+                    id: p.id, name: p.name, rollNumber: p.roll_number, email: p.email,
+                    chosenSpecialization: specs.find((sp) => sp.id === p.chosen_specialization_id)?.name ?? null,
+                    assignedSectionId: p.assigned_section_id ?? null,
+                    assignedSectionName: null,
+                    assignedSeat: p.assigned_seat ?? null,
+                    group: p.group_number ?? null,
+                  }));
+                  setState((p) => ({
+                    ...p,
+                    // Keep the logged-in student's own full record, merge peers
+                    students: [
+                      student,
+                      ...peerStudents.filter((ps: any) => ps.id !== student.id),
+                    ],
+                  }));
+                }
+              }
+            } catch { /* ignore */ }
+
+            // Realtime: subscribe to changes on students in same specialization
+            try {
+              if (data.chosen_specialization_id) {
+                const channel = supabase
+                  .channel(`student-peers-${data.chosen_specialization_id}`)
+                  .on("postgres_changes", {
+                    event: "*",
+                    schema: "public",
+                    table: "students",
+                    filter: `chosen_specialization_id=eq.${data.chosen_specialization_id}`,
+                  }, (payload) => {
+                    const r = payload.new as any;
+                    if (!r?.id) return;
+                    setState((p) => {
+                      const exists = p.students.find((s) => s.id === r.id);
+                      const updated = {
+                        ...(exists ?? {}),
+                        id: r.id,
+                        name: r.name ?? exists?.name ?? "",
+                        rollNumber: r.roll_number ?? exists?.rollNumber ?? "",
+                        email: r.email ?? exists?.email ?? "",
+                        chosenSpecialization: exists?.chosenSpecialization ?? null,
+                        assignedSectionId: r.assigned_section_id ?? null,
+                        assignedSectionName: exists?.assignedSectionName ?? null,
+                        assignedSeat: r.assigned_seat ?? null,
+                        group: r.group_number ?? null,
+                      };
+                      return {
+                        ...p,
+                        students: exists
+                          ? p.students.map((s) => s.id === r.id ? updated : s)
+                          : [...p.students, updated],
+                      };
+                    });
+                  })
+                  .subscribe();
+                // Unsubscribe when the component unmounts (best effort)
+                window.addEventListener("beforeunload", () => supabase.removeChannel(channel), { once: true });
               }
             } catch { /* ignore */ }
           })();
@@ -3193,7 +3292,7 @@ export default function Index() {
             {studentPage === "dashboard"      && <StudentDashboard me={liveMe} state={state} />}
             {studentPage === "spec-selection" && <StudentSpecSelection me={liveMe} state={state} showToast={showToast} setState={setState} session={session} />}
             {studentPage === "section-seat"   && <StudentSectionSeat me={liveMe} state={state} showToast={showToast} setState={setState} session={session} />}
-            {studentPage === "swaps"          && <StudentSwapRequests me={liveMe} state={state} showToast={showToast} setState={setState} />}
+            {studentPage === "swaps"          && <StudentSwapRequests me={liveMe} state={state} showToast={showToast} setState={setState} session={session} />}
             {studentPage === "change-password" && <ChangePasswordPage session={session} showToast={showToast} />}
           </>
         )}

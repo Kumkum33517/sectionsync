@@ -155,6 +155,33 @@ revoke all on public.rate_limit_log from anon, authenticated;
 grant all   on public.rate_limit_log to service_role;
 
 -- ─────────────────────────────────────────────────────────────────
+-- 7c. SWAP REQUESTS
+-- ─────────────────────────────────────────────────────────────────
+create table if not exists public.swap_requests (
+  id                    uuid        primary key default gen_random_uuid(),
+  requester_id          uuid        not null references public.students(id) on delete cascade,
+  target_id             uuid        not null references public.students(id) on delete cascade,
+  requester_section_id  uuid        references public.sections(id) on delete set null,
+  target_section_id     uuid        references public.sections(id) on delete set null,
+  status                text        not null default 'PENDING'
+                          check (status in ('PENDING','ACCEPTED','REJECTED','CANCELLED')),
+  note                  text,
+  created_at            timestamptz not null default now(),
+  resolved_at           timestamptz
+);
+
+create index if not exists swap_requests_requester_idx on public.swap_requests (requester_id);
+create index if not exists swap_requests_target_idx    on public.swap_requests (target_id);
+
+alter table public.swap_requests enable row level security;
+-- Students can read requests they are part of; writes go through API (service role)
+create policy "swap_requests_select" on public.swap_requests
+  for select using (
+    requester_id = (select id from public.students where auth_id = auth.uid()) or
+    target_id    = (select id from public.students where auth_id = auth.uid())
+  );
+
+-- ─────────────────────────────────────────────────────────────────
 -- 8. OTHER INDEXES
 -- ─────────────────────────────────────────────────────────────────
 create index if not exists students_email_idx    on public.students (lower(email));
