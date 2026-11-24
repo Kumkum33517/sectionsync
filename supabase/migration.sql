@@ -411,6 +411,28 @@ create policy "otp_no_direct_access" on public.otp_attempts
   for all using (false);
 
 -- ─────────────────────────────────────────────────────────────────
+-- 12b. STUDENT PEERS VIEW
+--      Safe read-only view exposing only non-sensitive fields.
+--      Students can query this to see section-mates for the seat
+--      map and swap requests without exposing email or auth_id.
+-- ─────────────────────────────────────────────────────────────────
+create or replace view public.student_peers
+  with (security_invoker = true)
+as
+  select
+    id,
+    name,
+    roll_number,
+    chosen_specialization_id,
+    assigned_section_id,
+    assigned_seat,
+    group_number
+  from public.students;
+
+-- Allow any authenticated user to read the view
+grant select on public.student_peers to authenticated;
+
+-- ─────────────────────────────────────────────────────────────────
 -- 13. GRANTS
 -- ─────────────────────────────────────────────────────────────────
 grant usage on schema public to anon, authenticated;

@@ -3161,13 +3161,13 @@ export default function Index() {
             try {
               if (data.chosen_specialization_id) {
                 const { data: peers } = await userClient
-                  .from("students")
-                  .select("id, name, roll_number, email, chosen_specialization_id, assigned_section_id, assigned_seat, group_number")
+                  .from("student_peers")
+                  .select("id, name, roll_number, chosen_specialization_id, assigned_section_id, assigned_seat, group_number")
                   .eq("chosen_specialization_id", data.chosen_specialization_id);
                 if (peers && peers.length > 0) {
                   const specs = specsOverride ?? state.specializations;
                   const peerStudents = peers.map((p: any) => ({
-                    id: p.id, name: p.name, rollNumber: p.roll_number, email: p.email,
+                    id: p.id, name: p.name, rollNumber: p.roll_number, email: "",
                     chosenSpecialization: specs.find((sp) => sp.id === p.chosen_specialization_id)?.name ?? null,
                     assignedSectionId: p.assigned_section_id ?? null,
                     assignedSectionName: null,
@@ -3189,40 +3189,50 @@ export default function Index() {
             // Realtime: subscribe to changes on students in same specialization
             try {
               if (data.chosen_specialization_id) {
+                const specId = data.chosen_specialization_id;
+                const refreshPeers = async () => {
+                  try {
+                    const { data: fresh } = await userClient
+                      .from("student_peers")
+                      .select("id, name, roll_number, chosen_specialization_id, assigned_section_id, assigned_seat, group_number")
+                      .eq("chosen_specialization_id", specId);
+                    if (!fresh) return;
+                    setState((p) => {
+                      const specs = p.specializations;
+                      const myRecord = p.students.find((s) => s.email === data.email);
+                      const peerList = fresh.map((r: any) => {
+                        const existing = p.students.find((s) => s.id === r.id);
+                        return {
+                          id: r.id,
+                          name: r.name,
+                          rollNumber: r.roll_number,
+                          email: existing?.email ?? "",
+                          chosenSpecialization: specs.find((sp) => sp.id === r.chosen_specialization_id)?.name ?? null,
+                          assignedSectionId: r.assigned_section_id ?? null,
+                          assignedSectionName: existing?.assignedSectionName ?? null,
+                          assignedSeat: r.assigned_seat ?? null,
+                          group: r.group_number ?? null,
+                        };
+                      });
+                      // Merge: keep own full record, replace/add peers
+                      const merged = [
+                        ...(myRecord ? [myRecord] : []),
+                        ...peerList.filter((ps: any) => ps.id !== (myRecord?.id ?? "")),
+                      ];
+                      return { ...p, students: merged };
+                    });
+                  } catch { /* ignore */ }
+                };
+
                 const channel = supabase
-                  .channel(`student-peers-${data.chosen_specialization_id}`)
+                  .channel(`student-peers-${specId}`)
                   .on("postgres_changes", {
                     event: "*",
                     schema: "public",
                     table: "students",
-                    filter: `chosen_specialization_id=eq.${data.chosen_specialization_id}`,
-                  }, (payload) => {
-                    const r = payload.new as any;
-                    if (!r?.id) return;
-                    setState((p) => {
-                      const exists = p.students.find((s) => s.id === r.id);
-                      const updated = {
-                        ...(exists ?? {}),
-                        id: r.id,
-                        name: r.name ?? exists?.name ?? "",
-                        rollNumber: r.roll_number ?? exists?.rollNumber ?? "",
-                        email: r.email ?? exists?.email ?? "",
-                        chosenSpecialization: exists?.chosenSpecialization ?? null,
-                        assignedSectionId: r.assigned_section_id ?? null,
-                        assignedSectionName: exists?.assignedSectionName ?? null,
-                        assignedSeat: r.assigned_seat ?? null,
-                        group: r.group_number ?? null,
-                      };
-                      return {
-                        ...p,
-                        students: exists
-                          ? p.students.map((s) => s.id === r.id ? updated : s)
-                          : [...p.students, updated],
-                      };
-                    });
-                  })
+                    filter: `chosen_specialization_id=eq.${specId}`,
+                  }, () => { refreshPeers(); })
                   .subscribe();
-                // Unsubscribe when the component unmounts (best effort)
                 window.addEventListener("beforeunload", () => supabase.removeChannel(channel), { once: true });
               }
             } catch { /* ignore */ }
