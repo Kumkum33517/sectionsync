@@ -1689,11 +1689,11 @@ function AdminStudentList({ state, showToast, setState, session }: {
 
   return (
     <div className="space-y-5 max-w-4xl">
+      <div>
+        <h2 className="font-display text-xl font-bold text-[#0b1825]">Student list management</h2>
+        <p className="text-sm text-[#71818a] mt-0.5">{state.students.length} authorized students</p>
+      </div>
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex-1">
-          <h2 className="font-display text-xl font-bold text-[#0b1825]">Student list management</h2>
-          <p className="text-sm text-[#71818a] mt-0.5">{state.students.length} authorized students</p>
-        </div>
         <Btn variant="secondary" onClick={downloadTemplate}><Download size={14} /> Excel template</Btn>
         {/* Delete entire list (students only) */}
         {!confirmDeleteAll && !confirmDeleteEverything && (
