@@ -3046,27 +3046,27 @@ export default function Index() {
             headers: { Authorization: `Bearer ${tok}` },
           });
           if (r.ok) {
+            // Await student list before marking session checked — eliminates the flash
+            try {
+              const stuRes = await fetch("/api/admin-students", { headers: { Authorization: `Bearer ${tok}` } });
+              const stuData = stuRes.ok ? await stuRes.json() : null;
+              if (stuData?.data) {
+                setState((p) => ({
+                  ...p,
+                  students: stuData.data.map((s: any) => ({
+                    id: s.id, rollNumber: s.roll_number, name: s.name, email: s.email,
+                    chosenSpecialization: s.chosen_specialization_id
+                      ? (freshSpecs.find((sp) => sp.id === s.chosen_specialization_id)?.name ?? null)
+                      : null,
+                    assignedSectionId: s.assigned_section_id ?? null,
+                    assignedSectionName: s.section?.name ?? null,
+                    assignedSeat: s.assigned_seat ?? null,
+                    group: s.group_number ?? null,
+                  })),
+                }));
+              }
+            } catch { /* non-critical — data loads fine, just may flash briefly */ }
             setSession({ role: "admin", email: em, accessToken: tok });
-            // Pre-load student list so admin dashboard doesn't flash empty
-            fetch("/api/admin-students", { headers: { Authorization: `Bearer ${tok}` } })
-              .then((r) => r.ok ? r.json() : null)
-              .then((d) => {
-                if (d?.data) {
-                  setState((p) => ({
-                    ...p,
-                    students: d.data.map((s: any) => ({
-                      id: s.id, rollNumber: s.roll_number, name: s.name, email: s.email,
-                      chosenSpecialization: s.chosen_specialization_id
-                        ? (freshSpecs.find((sp) => sp.id === s.chosen_specialization_id)?.name ?? null)
-                        : null,
-                      assignedSectionId: s.assigned_section_id ?? null,
-                      assignedSectionName: s.section?.name ?? null,
-                      assignedSeat: s.assigned_seat ?? null,
-                      group: s.group_number ?? null,
-                    })),
-                  }));
-                }
-              }).catch(() => {});
           } else {
             // Not an admin — check if they're a student before restoring
             // This blocks deleted admins from getting a blank student dashboard
@@ -3240,6 +3240,57 @@ export default function Index() {
     if (session?.role === "student") sessionStorage.setItem("studentPage", studentPage);
     if (session?.role === "admin")   sessionStorage.setItem("adminPage", adminPage);
   }, [studentPage, adminPage, session]);
+
+  // ── Admin realtime: reflect student changes instantly ────────────
+  useEffect(() => {
+    if (session?.role !== "admin") return;
+
+    const channel = supabase
+      .channel("admin-students-live")
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "students",
+      }, (payload) => {
+        const r = payload.new as any;
+        const eventType = payload.eventType;
+
+        if (eventType === "DELETE") {
+          const old = payload.old as any;
+          if (old?.id) setState((p) => ({ ...p, students: p.students.filter((s) => s.id !== old.id) }));
+          return;
+        }
+
+        if (!r?.id) return;
+
+        setState((p) => {
+          const existing = p.students.find((s) => s.id === r.id);
+          const specName = r.chosen_specialization_id
+            ? (p.specializations.find((sp) => sp.id === r.chosen_specialization_id)?.name ?? existing?.chosenSpecialization ?? null)
+            : null;
+          const updated = {
+            id:                   r.id,
+            rollNumber:           r.roll_number ?? existing?.rollNumber ?? "",
+            name:                 r.name ?? existing?.name ?? "",
+            email:                r.email ?? existing?.email ?? "",
+            chosenSpecialization: specName,
+            assignedSectionId:    r.assigned_section_id ?? null,
+            assignedSectionName:  existing?.assignedSectionName ?? null,
+            assignedSeat:         r.assigned_seat ?? null,
+            group:                r.group_number ?? null,
+          };
+          return {
+            ...p,
+            students: existing
+              ? p.students.map((s) => s.id === r.id ? updated : s)
+              : [...p.students, updated],
+          };
+        });
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [session?.role]);
 
   if (!sessionChecked) return (
     <div className="min-h-screen bg-[#f5f6ef] flex items-center justify-center">
