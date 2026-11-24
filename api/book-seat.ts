@@ -54,9 +54,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // ── Window check ────────────────────────────────────────────────
   const { data: config } = await adminSupabase
-    .from("system_config").select("section_window_open").eq("id", 1).single();
+    .from("system_config").select("section_window_open, section_window_new_only").eq("id", 1).single();
   if (!config?.section_window_open) {
     return res.status(403).json({ error: "Section selection window is currently closed." });
+  }
+
+  // If open for new students only, block students who already have an assigned section
+  if (config?.section_window_new_only) {
+    const { data: existing } = await adminSupabase
+      .from("students").select("assigned_section_id").eq("id", student.id).maybeSingle();
+    if (existing?.assigned_section_id) {
+      return res.status(403).json({ error: "The section window is currently open for new students only. Your existing seat is locked." });
+    }
   }
 
   // ── Atomic booking via DB function ──────────────────────────────

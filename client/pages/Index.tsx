@@ -759,51 +759,55 @@ function AdminSpecWindow({ state, showToast, setState, session }: {
   session: NonNullable<Session>;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
 }) {
-  const isOpen = state.phase === "SPEC_WINDOW_OPEN";
+  const isOpen      = state.phase === "SPEC_WINDOW_OPEN";
+  const newOnly     = state.specWindowNewOnly;
   const activeSpecs = state.specializations.filter((s) => s.active);
+
+  const reloadSections = async () => {
+    const secRes = await fetch("/api/admin-sections", { headers: { Authorization: `Bearer ${session.accessToken ?? ""}` } });
+    if (secRes.ok) {
+      const secData = await secRes.json();
+      const sections = (secData.data ?? []).map((s: any) => ({
+        id: s.id, name: s.name, capacity: s.capacity,
+        specializationId: s.specialization_id,
+        specializationName: s.specialization?.name ?? "",
+        occupancy: s.occupancy ?? 0,
+      }));
+      setState((p) => ({ ...p, sections }));
+    }
+  };
 
   const closeWindow = async () => {
     if (activeSpecs.length === 0) { showToast("No active specializations. Add some first.", true); return; }
     const selected = state.students.filter((s) => s.chosenSpecialization !== null).length;
     if (selected === 0) { showToast("No students have selected a specialization yet.", true); return; }
     try {
-      // Auto-create sections in DB via POST /api/admin-config
       const res = await fetch("/api/admin-config", {
         method: "POST",
         headers: { Authorization: `Bearer ${session.accessToken ?? ""}` },
       });
       const data = await res.json();
       if (!res.ok) { showToast(data.error ?? "Failed to close window.", true); return; }
-      // Reload sections from DB and update phase in local state
-      setState((p) => ({ ...p, phase: "SPEC_WINDOW_CLOSED", specWindowStatus: "CLOSED" }));
-      // Reload sections from DB
-      const secRes = await fetch("/api/admin-sections", { headers: { Authorization: `Bearer ${session.accessToken ?? ""}` } });
-      if (secRes.ok) {
-        const secData = await secRes.json();
-        const sections = (secData.data ?? []).map((s: any) => ({
-          id: s.id, name: s.name, capacity: s.capacity,
-          specializationId: s.specialization_id,
-          specializationName: s.specialization?.name ?? "",
-          occupancy: s.occupancy ?? 0,
-        }));
-        setState((p) => ({ ...p, sections }));
-      }
-      showToast(`Window closed. ${data.sectionsCreated ?? 0} sections created.`);
+      setState((p) => ({ ...p, phase: "SPEC_WINDOW_CLOSED", specWindowStatus: "CLOSED", specWindowNewOnly: false }));
+      await reloadSections();
+      showToast(`Window closed. ${data.sectionsCreated ?? 0} new section(s) created.`);
     } catch { showToast("Network error. Try again.", true); }
   };
 
-  const reopenWindow = async () => {
+  const reopenFor = async (newStudentsOnly: boolean) => {
     try {
       const res = await fetch("/api/admin-config", {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
-        body: JSON.stringify({ phase: "SPEC_WINDOW_OPEN" }),
+        body: JSON.stringify({ phase: "SPEC_WINDOW_OPEN", spec_window_new_only: newStudentsOnly }),
       });
       if (!res.ok) { showToast("Failed to reopen window.", true); return; }
-      setState((p) => ({ ...p, phase: "SPEC_WINDOW_OPEN", specWindowStatus: "OPEN", sections: [] }));
-      showToast("Specialization window reopened.");
+      setState((p) => ({ ...p, phase: "SPEC_WINDOW_OPEN", specWindowStatus: "OPEN", specWindowNewOnly: newStudentsOnly }));
+      showToast(newStudentsOnly ? "Window opened for new students only." : "Window opened for all students.");
     } catch { showToast("Network error. Try again.", true); }
   };
+
+  const newPending = state.students.filter((s) => s.chosenSpecialization === null).length;
 
   return (
     <div className="space-y-5 max-w-2xl">
@@ -813,17 +817,20 @@ function AdminSpecWindow({ state, showToast, setState, session }: {
             <h3 className="font-semibold text-[#0b1825] text-lg">Specialization selection window</h3>
             <p className="text-xs text-[#71818a] mt-0.5">Controls whether students can choose their specialization</p>
           </div>
-          <Badge color={isOpen ? "lime" : "red"}>{isOpen ? "OPEN" : "CLOSED"}</Badge>
+          <div className="flex items-center gap-2">
+            {isOpen && newOnly && <Badge color="yellow">New students only</Badge>}
+            <Badge color={isOpen ? "lime" : "red"}>{isOpen ? "OPEN" : "CLOSED"}</Badge>
+          </div>
         </div>
         <div className="rounded-xl bg-[#f9faf3] border border-[#eef0e4] p-4 space-y-2">
           {activeSpecs.map((spec, i) => {
-            const count = state.students.filter((s) => s.chosenSpecialization === spec.name).length;
+            const confirmed = state.students.filter((s) => s.chosenSpecialization === spec.name).length;
             return (
               <div key={spec.id} className="flex items-center justify-between text-sm">
                 <span className="flex items-center gap-2">
                   <span className={`h-2 w-2 rounded-full ${specPalette(i).dot}`} />{spec.name}
                 </span>
-                <span className="font-semibold text-[#0b1825]">{count} students</span>
+                <span className="font-semibold text-[#0b1825]">{confirmed} confirmed</span>
               </div>
             );
           })}
@@ -831,18 +838,40 @@ function AdminSpecWindow({ state, showToast, setState, session }: {
             <span>Total responded</span>
             <span>{state.students.filter((s) => s.chosenSpecialization !== null).length} / {state.students.length}</span>
           </div>
+          {newPending > 0 && (
+            <div className="pt-1 text-xs text-amber-700 font-medium">{newPending} student(s) haven't selected yet</div>
+          )}
         </div>
         {isOpen ? (
           <div className="space-y-3">
+            {newOnly && (
+              <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800">
+                Window is open for <strong>new students only</strong>. Existing selections are locked.
+              </div>
+            )}
             <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
-              Closing will auto-generate sections (target 50 students/section). You can adjust before opening section selection.
+              Closing will top-up sections only where needed. Existing sections and booked seats are preserved.
             </div>
             <Btn variant="danger" onClick={closeWindow} className="w-full">
-              <Lock size={15} /> Close window &amp; generate sections
+              <Lock size={15} /> Close window &amp; top-up sections
             </Btn>
           </div>
         ) : (
-          <Btn variant="secondary" onClick={reopenWindow} className="w-full">Reopen specialization window</Btn>
+          <div className="space-y-3">
+            <p className="text-xs text-[#71818a]">Choose who can make or change their specialization:</p>
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => reopenFor(true)}
+                className="rounded-2xl border-2 border-[#dde4cc] bg-white hover:border-[#0b1825] px-4 py-4 text-left transition">
+                <p className="font-bold text-sm text-[#0b1825]">New students only</p>
+                <p className="text-xs text-[#71818a] mt-1">Only students without a selection can choose. Existing locked.</p>
+              </button>
+              <button onClick={() => reopenFor(false)}
+                className="rounded-2xl border-2 border-[#dde4cc] bg-white hover:border-[#0b1825] px-4 py-4 text-left transition">
+                <p className="font-bold text-sm text-[#0b1825]">All students</p>
+                <p className="text-xs text-[#71818a] mt-1">Every student can select or change their specialization.</p>
+              </button>
+            </div>
+          </div>
         )}
       </Card>
     </div>
@@ -1129,22 +1158,24 @@ function AdminSectionWindow({ state, showToast, setState, session }: {
   session: NonNullable<Session>;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
 }) {
-  const canOpen = state.phase === "SECTIONS_FINALIZED" || state.phase === "SECTION_WINDOW_CLOSED";
-  const isOpen  = state.phase === "SECTION_WINDOW_OPEN";
-  const seated  = state.students.filter((s) => s.assignedSectionId !== null).length;
+  const canOpen  = state.phase === "SECTIONS_FINALIZED" || state.phase === "SECTION_WINDOW_CLOSED";
+  const isOpen   = state.phase === "SECTION_WINDOW_OPEN";
+  const newOnly  = state.sectionWindowNewOnly;
+  const seated   = state.students.filter((s) => s.assignedSectionId !== null).length;
+  const unseated = state.students.filter((s) => s.assignedSectionId === null).length;
 
   const handleCloseWindow = async () => {
     try {
       const res = await fetch("/api/admin-config", {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
-        body: JSON.stringify({ phase: "SECTION_WINDOW_CLOSED" }),
+        body: JSON.stringify({ phase: "SECTION_WINDOW_CLOSED", section_window_new_only: false }),
       });
       if (!res.ok) { showToast("Failed to close window.", true); return; }
     } catch { showToast("Network error. Try again.", true); return; }
-    setState((p) => ({ ...p, phase: "SECTION_WINDOW_CLOSED", sectionWindowStatus: "CLOSED" }));
-    // Assign G1/G2 groups to all seated students
-    const students = state.students.filter((s) => s.assignedSectionId !== null);
+    setState((p) => ({ ...p, phase: "SECTION_WINDOW_CLOSED", sectionWindowStatus: "CLOSED", sectionWindowNewOnly: false }));
+    // Auto-assign G1/G2 to any seated student who doesn't have a group yet
+    const students = state.students.filter((s) => s.assignedSectionId !== null && s.group === null);
     const bySection: Record<string, Student[]> = {};
     for (const s of students) {
       if (!s.assignedSectionId) continue;
@@ -1157,27 +1188,40 @@ function AdminSectionWindow({ state, showToast, setState, session }: {
       const half = Math.ceil(sorted.length / 2);
       sorted.forEach((s, i) => { updates[s.id] = i < half ? 1 : 2; });
     }
-    setState((p) => ({
-      ...p,
-      students: p.students.map((s) =>
-        updates[s.id] !== undefined ? { ...s, group: updates[s.id] } : s
-      ),
-    }));
+    if (Object.keys(updates).length > 0) {
+      setState((p) => ({
+        ...p,
+        students: p.students.map((s) => updates[s.id] !== undefined ? { ...s, group: updates[s.id] } : s),
+      }));
+      void (async () => {
+        try {
+          await Promise.all(Object.entries(updates).map(([studentId, group]) =>
+            fetch("/api/admin-students", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+              body: JSON.stringify({ id: studentId, group_number: group }),
+            })
+          ));
+        } catch { /* non-critical */ }
+      })();
+    }
     const g1 = Object.values(updates).filter((g) => g === 1).length;
     const g2 = Object.values(updates).filter((g) => g === 2).length;
-    showToast(`Window closed. Groups assigned: G1 = ${g1}, G2 = ${g2}.`);
-    // Persist group assignments to DB in background
-    void (async () => {
-      try {
-        await Promise.all(Object.entries(updates).map(([studentId, group]) =>
-          fetch("/api/admin-students", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
-            body: JSON.stringify({ id: studentId, group_number: group }),
-          })
-        ));
-      } catch { /* non-critical — groups will be recalculated if needed */ }
-    })();
+    showToast(g1 + g2 > 0 ? `Window closed. Auto-assigned: G1=${g1}, G2=${g2}.` : "Window closed.");
+  };
+
+  const openFor = async (newStudentsOnly: boolean) => {
+    const deadline = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    try {
+      const res = await fetch("/api/admin-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+        body: JSON.stringify({ phase: "SECTION_WINDOW_OPEN", section_window_deadline: deadline, section_window_new_only: newStudentsOnly }),
+      });
+      if (!res.ok) { showToast("Failed to open window.", true); return; }
+      setState((p) => ({ ...p, phase: "SECTION_WINDOW_OPEN", sectionWindowStatus: "OPEN", sectionWindowNewOnly: newStudentsOnly, sectionWindowDeadline: deadline }));
+      showToast(newStudentsOnly ? "Section window opened for new students only." : "Section window opened for all students.");
+    } catch { showToast("Network error.", true); }
   };
 
   const exportExcel = () => downloadAllocationExcel(session.accessToken ?? "", state.specializations);
@@ -1190,7 +1234,10 @@ function AdminSectionWindow({ state, showToast, setState, session }: {
             <h3 className="font-semibold text-[#0b1825] text-lg">Section-selection window</h3>
             <p className="text-xs text-[#71818a] mt-0.5">When open, students can pick their section and seat</p>
           </div>
-          <Badge color={isOpen ? "lime" : "red"}>{isOpen ? "OPEN" : "CLOSED"}</Badge>
+          <div className="flex items-center gap-2">
+            {isOpen && newOnly && <Badge color="yellow">New students only</Badge>}
+            <Badge color={isOpen ? "lime" : "red"}>{isOpen ? "OPEN" : "CLOSED"}</Badge>
+          </div>
         </div>
         {(state.phase === "SPEC_WINDOW_OPEN" || state.phase === "SPEC_WINDOW_CLOSED") ? (
           <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
@@ -1200,38 +1247,41 @@ function AdminSectionWindow({ state, showToast, setState, session }: {
           <>
             <div className="rounded-xl bg-[#f9faf3] border border-[#eef0e4] p-4 space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-[#71818a]">Students seated</span><span className="font-bold text-[#0b1825]">{seated} / {state.students.length}</span></div>
+              <div className="flex justify-between"><span className="text-[#71818a]">Awaiting seat</span><span className={`font-bold ${unseated > 0 ? "text-amber-600" : "text-[#0b1825]"}`}>{unseated}</span></div>
               <div className="flex justify-between"><span className="text-[#71818a]">Sections available</span><span className="font-bold text-[#0b1825]">{state.sections.length}</span></div>
             </div>
-            {isOpen
-              ? (
-                <div className="space-y-3">
+            {isOpen ? (
+              <div className="space-y-3">
+                {newOnly && (
                   <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800">
-                    Closing this window will <strong>automatically split each section into G1 and G2</strong> based on seat order. Lower seat numbers → G1, higher → G2, split as evenly as possible.
+                    Open for <strong>new students only</strong>. Previously seated students cannot change their seat.
                   </div>
-                  <Btn variant="danger" onClick={handleCloseWindow} className="w-full"><Lock size={15} /> Close window &amp; assign groups</Btn>
+                )}
+                <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800">
+                  Closing will auto-assign G1/G2 to any students who haven't chosen a group yet.
                 </div>
-              )
-              : (
-                <div className="space-y-3">
-                  <Btn variant="lime" onClick={async () => {
-                    const deadline = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-                    try {
-                      const res = await fetch("/api/admin-config", {
-                        method: "PUT",
-                        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
-                        body: JSON.stringify({ phase: "SECTION_WINDOW_OPEN", section_window_deadline: deadline }),
-                      });
-                      if (!res.ok) { showToast("Failed to open window.", true); return; }
-                      setState((p) => ({ ...p, phase: "SECTION_WINDOW_OPEN", sectionWindowStatus: "OPEN", sectionWindowDeadline: deadline }));
-                      showToast("Section-selection window opened.");
-                    } catch { showToast("Network error.", true); }
-                  }} disabled={!canOpen} className="w-full"><CheckCircle2 size={15} /> Open section-selection window</Btn>
-                  {state.phase === "SECTION_WINDOW_CLOSED" && (
-                    <Btn variant="secondary" onClick={exportExcel} className="w-full"><Download size={14} /> Download allocation Excel</Btn>
-                  )}
+                <Btn variant="danger" onClick={handleCloseWindow} className="w-full"><Lock size={15} /> Close window &amp; assign groups</Btn>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs text-[#71818a]">Choose who can pick or change their section and seat:</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <button onClick={() => openFor(true)} disabled={!canOpen && unseated === 0}
+                    className="rounded-2xl border-2 border-[#dde4cc] bg-white hover:border-[#0b1825] px-4 py-4 text-left transition disabled:opacity-40 disabled:cursor-not-allowed">
+                    <p className="font-bold text-sm text-[#0b1825]">New students only</p>
+                    <p className="text-xs text-[#71818a] mt-1">Only unseated students can book. Existing seats unchanged.</p>
+                  </button>
+                  <button onClick={() => openFor(false)} disabled={!canOpen}
+                    className="rounded-2xl border-2 border-[#dde4cc] bg-white hover:border-[#0b1825] px-4 py-4 text-left transition disabled:opacity-40 disabled:cursor-not-allowed">
+                    <p className="font-bold text-sm text-[#0b1825]">All students</p>
+                    <p className="text-xs text-[#71818a] mt-1">Every student can pick or change their seat and group.</p>
+                  </button>
                 </div>
-              )
-            }
+                {state.phase === "SECTION_WINDOW_CLOSED" && (
+                  <Btn variant="secondary" onClick={exportExcel} className="w-full"><Download size={14} /> Download allocation Excel</Btn>
+                )}
+              </div>
+            )}
           </>
         )}
       </Card>
@@ -1655,7 +1705,7 @@ function AdminStudentList({ state, showToast, setState, session }: {
       });
       setState((p) => ({
         ...p, students: [], sections: [],
-        phase: "SPEC_WINDOW_OPEN", specWindowStatus: "OPEN", sectionWindowStatus: "CLOSED",
+        phase: "SPEC_WINDOW_OPEN", specWindowStatus: "OPEN", specWindowNewOnly: false, sectionWindowStatus: "CLOSED", sectionWindowNewOnly: false,
       }));
       showToast("All students, sections, groups and seats deleted.");
       setConfirmDeleteEverything(false);
@@ -2141,7 +2191,10 @@ function StudentSpecSelection({ me, state, showToast, setState, session }: {
   setState: React.Dispatch<React.SetStateAction<AppState>>;
   session: NonNullable<Session>;
 }) {
-  const isOpen      = state.phase === "SPEC_WINDOW_OPEN";
+  const windowOpen  = state.phase === "SPEC_WINDOW_OPEN";
+  // If window is new-only and student already has a selection, treat as closed for them
+  const isOpen      = windowOpen && !(state.specWindowNewOnly && me.chosenSpecialization !== null);
+  const lockedNewOnly = windowOpen && state.specWindowNewOnly && me.chosenSpecialization !== null;
   const activeSpecs = state.specializations.filter((s) => s.active);
   // pending = what the student has clicked but not yet confirmed
   const [pending, setPending] = useState<string | null>(null);
@@ -2189,7 +2242,12 @@ function StudentSpecSelection({ me, state, showToast, setState, session }: {
             : "The specialization selection window is currently closed."}
         </p>
       </div>
-      {!isOpen && (
+      {lockedNewOnly && (
+        <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800 flex items-center gap-2">
+          <Lock size={14} /> The window is open for new students only. Your selection is locked.
+        </div>
+      )}
+      {!windowOpen && (
         <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 flex items-center gap-2">
           <Lock size={14} /> Window closed. Contact your admin if changes are needed.
         </div>
@@ -2257,7 +2315,10 @@ function StudentSectionSeat({ me, state, showToast, setState, session }: {
   // After seat is booked, show group picker for the section the seat was booked in
   const [groupPickSection, setGroupPickSection] = useState<string | null>(null);
   const [savingGroup, setSavingGroup] = useState(false);
-  const isOpen = state.phase === "SECTION_WINDOW_OPEN";
+  const sectionWindowOpen = state.phase === "SECTION_WINDOW_OPEN";
+  // If window is new-only and student already has a seat, treat as closed for them
+  const isOpen = sectionWindowOpen && !(state.sectionWindowNewOnly && me.assignedSectionId !== null);
+  const lockedNewOnly = sectionWindowOpen && state.sectionWindowNewOnly && me.assignedSectionId !== null;
 
   if (!me.chosenSpecialization) {
     return (
@@ -2280,6 +2341,15 @@ function StudentSectionSeat({ me, state, showToast, setState, session }: {
     );
   }
 
+  if (lockedNewOnly) {
+    return (
+      <Card className="p-10 text-center max-w-lg">
+        <Lock size={28} className="text-blue-300 mx-auto mb-3" />
+        <p className="font-semibold text-[#0b1825] mb-1">Your seat is confirmed</p>
+        <p className="text-sm text-[#71818a]">The section window is open for new students only. Your existing seat and group are locked.</p>
+      </Card>
+    );
+  }
   if (!isOpen && me.assignedSectionId === null) {
     return (
       <Card className="p-10 text-center max-w-lg">
@@ -2915,7 +2985,9 @@ export default function Index() {
           ...p,
           phase:                d.phase,
           specWindowStatus:     d.spec_window_open ? "OPEN" : "CLOSED",
+          specWindowNewOnly:    d.spec_window_new_only ?? false,
           sectionWindowStatus:  d.section_window_open ? "OPEN" : "CLOSED",
+          sectionWindowNewOnly: d.section_window_new_only ?? false,
           sectionWindowDeadline: d.section_window_deadline ?? null,
         }));
       }

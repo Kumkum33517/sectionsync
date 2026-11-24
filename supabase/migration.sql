@@ -28,22 +28,29 @@ on conflict (email) do nothing;
 -- 2. SYSTEM CONFIG  (single row, id always = 1)
 -- ─────────────────────────────────────────────────────────────────
 create table if not exists public.system_config (
-  id                      int         primary key default 1,
-  phase                   text        not null default 'SPEC_WINDOW_OPEN'
-                            check (phase in (
-                              'SPEC_WINDOW_OPEN','SPEC_WINDOW_CLOSED',
-                              'SECTIONS_FINALIZED',
-                              'SECTION_WINDOW_OPEN','SECTION_WINDOW_CLOSED'
-                            )),
-  spec_window_open        boolean     not null default true,
-  section_window_open     boolean     not null default false,
-  section_window_deadline timestamptz,
-  updated_at              timestamptz not null default now(),
+  id                        int         primary key default 1,
+  phase                     text        not null default 'SPEC_WINDOW_OPEN'
+                              check (phase in (
+                                'SPEC_WINDOW_OPEN','SPEC_WINDOW_CLOSED',
+                                'SECTIONS_FINALIZED',
+                                'SECTION_WINDOW_OPEN','SECTION_WINDOW_CLOSED'
+                              )),
+  spec_window_open          boolean     not null default true,
+  spec_window_new_only      boolean     not null default false,
+  section_window_open       boolean     not null default false,
+  section_window_new_only   boolean     not null default false,
+  section_window_deadline   timestamptz,
+  updated_at                timestamptz not null default now(),
   constraint one_row check (id = 1)
 );
 
 insert into public.system_config (id) values (1)
 on conflict (id) do nothing;
+
+-- Add new_only columns to existing deployments (safe to run repeatedly)
+alter table public.system_config
+  add column if not exists spec_window_new_only    boolean not null default false,
+  add column if not exists section_window_new_only boolean not null default false;
 
 -- ─────────────────────────────────────────────────────────────────
 -- 3. SPECIALIZATIONS

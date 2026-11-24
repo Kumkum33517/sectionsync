@@ -41,9 +41,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Verify spec window is open
   const { data: config } = await adminSupabase
-    .from("system_config").select("phase").eq("id", 1).single();
+    .from("system_config").select("phase, spec_window_new_only").eq("id", 1).single();
   if (config?.phase !== "SPEC_WINDOW_OPEN") {
     return res.status(403).json({ error: "Specialization window is not open." });
+  }
+
+  // If the window is open for new students only, block students who already have a specialization
+  if (config?.spec_window_new_only) {
+    const { data: existing } = await adminSupabase
+      .from("students")
+      .select("chosen_specialization_id")
+      .eq("email", user.email.toLowerCase())
+      .maybeSingle();
+    if (existing?.chosen_specialization_id) {
+      return res.status(403).json({ error: "The specialization window is currently open for new students only. Your existing selection is locked." });
+    }
   }
 
   // Verify specialization exists and is active

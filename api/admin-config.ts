@@ -75,6 +75,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (typeof spec_window_open    === "boolean") updates.spec_window_open    = spec_window_open;
     if (typeof section_window_open === "boolean") updates.section_window_open = section_window_open;
+    if (typeof req.body?.spec_window_new_only    === "boolean") updates.spec_window_new_only    = req.body.spec_window_new_only;
+    if (typeof req.body?.section_window_new_only === "boolean") updates.section_window_new_only = req.body.section_window_new_only;
     if (section_window_deadline !== undefined)    updates.section_window_deadline = section_window_deadline;
 
     const { error } = await adminSupabase.from("system_config").update(updates).eq("id", 1);
@@ -82,49 +84,73 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ ok: true });
   }
 
-  // ── POST — auto-create sections ───────────────────────────────
+  // ── POST — top-up section creation (safe, never deletes existing seats) ──
   if (req.method === "POST") {
     const { data: specs } = await adminSupabase
       .from("specializations").select("id, name").eq("active", true);
     if (!specs?.length) return res.status(400).json({ error: "No active specializations found." });
 
+    // Count students per specialization (all who have chosen one)
     const { data: students } = await adminSupabase
       .from("students").select("chosen_specialization_id")
       .not("chosen_specialization_id", "is", null);
 
-    const counts: Record<string, number> = {};
+    const totalBySpec: Record<string, number> = {};
     for (const s of students ?? []) {
       if (s.chosen_specialization_id)
-        counts[s.chosen_specialization_id] = (counts[s.chosen_specialization_id] ?? 0) + 1;
+        totalBySpec[s.chosen_specialization_id] = (totalBySpec[s.chosen_specialization_id] ?? 0) + 1;
+    }
+
+    // Load existing sections with their current seat occupancy
+    const { data: existingSections } = await adminSupabase
+      .from("sections")
+      .select("id, name, capacity, specialization_id");
+
+    const sectionsBySpec: Record<string, { id: string; name: string; capacity: number }[]> = {};
+    for (const sec of existingSections ?? []) {
+      if (!sectionsBySpec[sec.specialization_id]) sectionsBySpec[sec.specialization_id] = [];
+      sectionsBySpec[sec.specialization_id].push(sec);
     }
 
     const toInsert: { specialization_id: string; name: string; capacity: number }[] = [];
+
     for (const spec of specs) {
-      const count = counts[spec.id] ?? 0;
-      if (!count) continue;
-      const n = Math.ceil(count / TARGET_CAP);
-      const base = Math.floor(count / n);
-      const rem  = count % n;
-      for (let i = 0; i < n; i++) {
-        // capacity = actual student count for this section (rem sections get +1)
-        const cap = i < rem ? base + 1 : base;
-        toInsert.push({ specialization_id: spec.id, name: `${specAbbrev(spec.name)}-${SECTION_NAMES[i] ?? i+1}`, capacity: cap });
+      const total = totalBySpec[spec.id] ?? 0;
+      if (!total) continue;
+
+      const existing = sectionsBySpec[spec.id] ?? [];
+      const existingCap = existing.reduce((sum, s) => sum + s.capacity, 0);
+
+      if (existingCap >= total) continue; // existing sections have enough room — no new sections needed
+
+      // Need to create sections to cover the overflow
+      const overflow = total - existingCap;
+      const newSectionCount = Math.ceil(overflow / TARGET_CAP);
+      const usedNames = new Set(existing.map((s) => s.name.split("-").pop() ?? ""));
+      let nameIdx = 0;
+      for (let i = 0; i < newSectionCount; i++) {
+        // Find next unused letter
+        while (nameIdx < SECTION_NAMES.length && usedNames.has(SECTION_NAMES[nameIdx])) nameIdx++;
+        const letter = SECTION_NAMES[nameIdx] ?? String(existing.length + i + 1);
+        const base = Math.floor(overflow / newSectionCount);
+        const rem  = overflow % newSectionCount;
+        const cap  = i < rem ? base + 1 : base;
+        toInsert.push({ specialization_id: spec.id, name: `${specAbbrev(spec.name)}-${letter}`, capacity: cap });
+        nameIdx++;
       }
     }
-    if (!toInsert.length) return res.status(400).json({ error: "No student specialization selections found." });
 
-    const { data: booked } = await adminSupabase
-      .from("seats").select("id").not("student_id","is",null).limit(1);
-    if (booked?.length) return res.status(409).json({ error: "Cannot regenerate sections — students have already booked seats." });
+    // If no existing sections at all and nothing to insert — error
+    const hasAnySections = (existingSections ?? []).length > 0 || toInsert.length > 0;
+    if (!hasAnySections) return res.status(400).json({ error: "No student specialization selections found." });
 
-    await adminSupabase.from("seats").delete().neq("id","00000000-0000-0000-0000-000000000000");
-    await adminSupabase.from("sections").delete().neq("id","00000000-0000-0000-0000-000000000000");
-
-    const { error } = await adminSupabase.from("sections").insert(toInsert);
-    if (error) return res.status(500).json({ error: safeError(error) });
+    if (toInsert.length > 0) {
+      const { error } = await adminSupabase.from("sections").insert(toInsert);
+      if (error) return res.status(500).json({ error: safeError(error) });
+    }
 
     await adminSupabase.from("system_config")
-      .update({ phase:"SPEC_WINDOW_CLOSED", spec_window_open:false, section_window_open:false, updated_at:new Date().toISOString() })
+      .update({ phase:"SPEC_WINDOW_CLOSED", spec_window_open:false, spec_window_new_only:false, section_window_open:false, updated_at:new Date().toISOString() })
       .eq("id",1);
 
     return res.status(200).json({ ok: true, sectionsCreated: toInsert.length });

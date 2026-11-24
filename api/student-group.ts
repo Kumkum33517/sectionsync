@@ -45,9 +45,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // ── Window must be open ────────────────────────────────────────
   const { data: config } = await adminSupabase
-    .from("system_config").select("phase, section_window_open").eq("id", 1).single();
+    .from("system_config").select("phase, section_window_open, section_window_new_only").eq("id", 1).single();
   if (!config?.section_window_open) {
     return res.status(403).json({ error: "Section selection window is not open." });
+  }
+  if (config?.section_window_new_only) {
+    const { data: existing } = await adminSupabase
+      .from("students").select("group_number").eq("id", student.id).maybeSingle();
+    if (existing?.group_number) {
+      return res.status(403).json({ error: "The section window is open for new students only. Your group is already set." });
+    }
   }
 
   // ── Student must have an assigned section ──────────────────────

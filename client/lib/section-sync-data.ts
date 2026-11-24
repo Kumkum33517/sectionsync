@@ -103,7 +103,9 @@ export interface SwapRequest {
 export interface AppState {
   phase: AppPhase;
   specWindowStatus: SpecWindowStatus;
+  specWindowNewOnly: boolean;
   sectionWindowStatus: SectionWindowStatus;
+  sectionWindowNewOnly: boolean;
   sectionWindowDeadline: string | null;
   specializations: SpecializationDef[];
   students: Student[];
@@ -231,7 +233,9 @@ export function createInitialData(): AppState {
   return {
     phase: "SPEC_WINDOW_OPEN",
     specWindowStatus: "OPEN",
+    specWindowNewOnly: false,
     sectionWindowStatus: "CLOSED",
+    sectionWindowNewOnly: false,
     sectionWindowDeadline: null,
     specializations: createDefaultSpecializations(),
     students: createStudents(),
