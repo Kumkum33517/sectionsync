@@ -49,24 +49,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!config?.section_window_open) {
     return res.status(403).json({ error: "Section selection window is not open." });
   }
-  if (config?.section_window_new_only) {
-    const { data: existing } = await adminSupabase
-      .from("students").select("group_number").eq("id", student.id).maybeSingle();
-    if (existing?.group_number) {
-      return res.status(403).json({ error: "The section window is open for new students only. Your group is already set." });
-    }
-  }
 
   // ── Student must have an assigned section ──────────────────────
   const { data: student, error: sErr } = await adminSupabase
     .from("students")
-    .select("id, assigned_section_id")
+    .select("id, assigned_section_id, group_number")
     .eq("email", user.email.toLowerCase())
     .maybeSingle();
 
   if (sErr || !student) return res.status(403).json({ error: "Student record not found." });
   if (!student.assigned_section_id) {
     return res.status(403).json({ error: "You must book a seat before choosing a group." });
+  }
+
+  // ── If new-only window, block students who already have a group ─
+  if (config?.section_window_new_only && student.group_number) {
+    return res.status(403).json({ error: "The section window is open for new students only. Your group is already set." });
   }
 
   // ── Check group capacity ───────────────────────────────────────
