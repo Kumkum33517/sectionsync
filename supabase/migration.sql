@@ -445,6 +445,14 @@ grant all   on public.otp_attempts  to service_role;
 grant all   on public.admins        to service_role;
 -- rate_limit_log grants are set inline above where the table is created
 
+-- ─────────────────────────────────────────────────────────────────
+-- 14. REALTIME PUBLICATIONS
+--     Enable realtime on tables that need live updates.
+--     Safe to run repeatedly — ADD TABLE is idempotent if already added.
+-- ─────────────────────────────────────────────────────────────────
+alter publication supabase_realtime add table public.students;
+alter publication supabase_realtime add table public.swap_requests;
+
 -- ═══════════════════════════════════════════════════════════════════
 -- Migration complete.
 -- Tables: admins, system_config, specializations, sections, students, seats, otp_attempts

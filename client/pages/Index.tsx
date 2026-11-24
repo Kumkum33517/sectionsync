@@ -2647,6 +2647,12 @@ function StudentSwapRequests({ me, state, showToast, setState, session }: {
   // ── Load swap requests from DB on mount and subscribe realtime ──
   useEffect(() => {
     if (!me.id) return;
+    const userClient = createClient(
+      import.meta.env.VITE_SUPABASE_URL as string,
+      import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+      { global: { headers: { Authorization: `Bearer ${session.accessToken ?? ""}` } } }
+    );
+
     const load = async () => {
       try {
         const res = await fetch("/api/student-swaps", {
@@ -2668,13 +2674,36 @@ function StudentSwapRequests({ me, state, showToast, setState, session }: {
         setState((p) => ({ ...p, swapRequests: reqs }));
       } catch { /* ignore */ }
     };
+    // Refresh own section/seat/group after a swap acceptance
+    const refreshOwnRecord = async () => {
+      try {
+        const { data: fresh } = await userClient
+          .from("students")
+          .select("assigned_section_id, assigned_seat, group_number, section:assigned_section_id(id,name)")
+          .eq("id", me.id).maybeSingle();
+        if (fresh) {
+          setState((p) => ({ ...p, students: p.students.map((s) => s.id === me.id ? {
+            ...s,
+            assignedSectionId: (fresh as any).assigned_section_id ?? null,
+            assignedSectionName: (fresh as any).section?.name ?? null,
+            assignedSeat: (fresh as any).assigned_seat ?? null,
+            group: (fresh as any).group_number ?? null,
+          } : s) }));
+        }
+      } catch { /* ignore */ }
+    };
+
     load();
 
-    // Realtime: update when any swap request involving this student changes
+    // Realtime: re-fetch swap list; also refresh own record if a swap was accepted
     const channel = supabase
       .channel(`swap-requests-${me.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "swap_requests" }, () => {
-        load(); // re-fetch on any change — simple and correct
+      .on("postgres_changes", { event: "*", schema: "public", table: "swap_requests" }, (payload) => {
+        load();
+        const r = (payload.new ?? payload.old) as any;
+        if (r?.status === "ACCEPTED" && (r?.requester_id === me.id || r?.target_id === me.id)) {
+          refreshOwnRecord();
+        }
       })
       .subscribe();
 
