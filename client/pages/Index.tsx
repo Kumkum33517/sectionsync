@@ -1693,36 +1693,36 @@ function AdminStudentList({ state, showToast, setState, session }: {
         <h2 className="font-display text-xl font-bold text-[#0b1825]">Student list management</h2>
         <p className="text-sm text-[#71818a] mt-0.5">{state.students.length} authorized students</p>
       </div>
+      {/* Action buttons row — never mixed with confirm banners */}
       <div className="flex flex-wrap items-center gap-3">
         <Btn variant="secondary" onClick={downloadTemplate}><Download size={14} /> Excel template</Btn>
-        {/* Delete entire list (students only) */}
         {!confirmDeleteAll && !confirmDeleteEverything && (
           <Btn variant="danger" onClick={() => setConfirmDeleteAll(true)} disabled={state.students.length === 0}>
             <Trash2 size={14} /> Delete entire list
           </Btn>
         )}
-        {confirmDeleteAll && (
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm">
-            <span className="text-red-700 font-medium">Delete all {state.students.length} students?</span>
-            <Btn variant="danger" onClick={deleteAllStudents} disabled={deletingAll}>{deletingAll ? "Deleting…" : "Confirm"}</Btn>
-            <Btn variant="secondary" onClick={() => setConfirmDeleteAll(false)}>Cancel</Btn>
-          </div>
-        )}
-        {/* Delete everything (students + sections + groups + seats) */}
         {!confirmDeleteAll && !confirmDeleteEverything && (
           <Btn variant="danger" onClick={() => setConfirmDeleteEverything(true)} disabled={state.students.length === 0 && state.sections.length === 0}>
             <Trash2 size={14} /> Delete all (students + sections + groups &amp; seats)
           </Btn>
         )}
-        {confirmDeleteEverything && (
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm">
-            <span className="text-red-700 font-medium">Delete all {state.students.length} students, sections, groups &amp; seats? This cannot be undone.</span>
-            <Btn variant="danger" onClick={deleteEverything} disabled={deletingAll}>{deletingAll ? "Deleting…" : "Confirm"}</Btn>
-            <Btn variant="secondary" onClick={() => setConfirmDeleteEverything(false)}>Cancel</Btn>
-          </div>
-        )}
         <Btn variant="primary" onClick={openAdd}><Plus size={14} /> Add student</Btn>
       </div>
+      {/* Confirm banners — full width, below the buttons row */}
+      {confirmDeleteAll && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm">
+          <span className="text-red-700 font-medium flex-1">Delete all {state.students.length} students? This cannot be undone.</span>
+          <Btn variant="danger" onClick={deleteAllStudents} disabled={deletingAll}>{deletingAll ? "Deleting…" : "Confirm"}</Btn>
+          <Btn variant="secondary" onClick={() => setConfirmDeleteAll(false)}>Cancel</Btn>
+        </div>
+      )}
+      {confirmDeleteEverything && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm">
+          <span className="text-red-700 font-medium flex-1">Delete all {state.students.length} students, sections, groups &amp; seats? This cannot be undone.</span>
+          <Btn variant="danger" onClick={deleteEverything} disabled={deletingAll}>{deletingAll ? "Deleting…" : "Confirm"}</Btn>
+          <Btn variant="secondary" onClick={() => setConfirmDeleteEverything(false)}>Cancel</Btn>
+        </div>
+      )}
 
       {/* Upload zone */}
       <Card className="p-5">
@@ -2337,12 +2337,16 @@ function StudentSectionSeat({ me, state, showToast, setState, session }: {
   const pickGroup = async (group: 1 | 2) => {
     setSavingGroup(true);
     try {
-      const res = await fetch("/api/admin-students", {
-        method: "PUT",
+      const res = await fetch("/api/student-group", {
+        method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
-        body: JSON.stringify({ id: me.id, group_number: group }),
+        body: JSON.stringify({ group_number: group }),
       });
-      if (!res.ok) { showToast("Could not save group. Try again.", true); setSavingGroup(false); return; }
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        showToast(d.error ?? "Could not save group. Try again.", true);
+        setSavingGroup(false); return;
+      }
       setState((p) => ({ ...p, students: p.students.map((s) => s.id === me.id ? { ...s, group } : s) }));
       showToast(`Group ${group} confirmed!`);
       setGroupPickSection(null);
@@ -2374,45 +2378,6 @@ function StudentSectionSeat({ me, state, showToast, setState, session }: {
           );
         })}
       </div>
-
-      {/* ── Group picker — shown after seat is booked or if seat exists but group is not set ── */}
-      {isOpen && me.assignedSectionId && !me.group && (() => {
-        const gpSectionId = groupPickSection ?? me.assignedSectionId;
-        const gpSection = state.sections.find((s) => s.id === gpSectionId);
-        if (!gpSection) return null;
-        const studentsInGp = state.students.filter((s) => s.assignedSectionId === gpSectionId);
-        const g1Cap = Math.ceil(gpSection.capacity / 2);
-        const g2Cap = gpSection.capacity - g1Cap;
-        const g1Count = studentsInGp.filter((s) => s.group === 1).length;
-        const g2Count = studentsInGp.filter((s) => s.group === 2).length;
-        const g1Full = g1Count >= g1Cap;
-        const g2Full = g2Count >= g2Cap;
-        return (
-          <Card className="p-5 border-2 border-[#d8ff5b]">
-            <h3 className="font-semibold text-[#0b1825] mb-1">Choose your group</h3>
-            <p className="text-sm text-[#71818a] mb-4">
-              Your seat in <strong>{gpSection.name}</strong> is confirmed. Now pick your group.
-            </p>
-            <div className="flex gap-3">
-              {([1, 2] as const).map((g) => {
-                const count = g === 1 ? g1Count : g2Count;
-                const cap   = g === 1 ? g1Cap   : g2Cap;
-                const full  = g === 1 ? g1Full  : g2Full;
-                return (
-                  <button key={g} onClick={() => !full && !savingGroup && pickGroup(g)} disabled={full || savingGroup}
-                    className={`flex-1 rounded-2xl border-2 px-5 py-4 text-left transition
-                      ${full ? "border-[#dde4cc] bg-[#f9faf3] opacity-50 cursor-not-allowed"
-                             : "border-[#dde4cc] bg-white hover:border-[#0b1825] hover:bg-[#f5f6ef] cursor-pointer"}`}>
-                    <p className="font-bold text-base text-[#0b1825]">Group {g}</p>
-                    <p className="text-xs text-[#71818a] mt-0.5">{count}/{cap} students{full ? " — Full" : ""}</p>
-                  </button>
-                );
-              })}
-            </div>
-            {savingGroup && <p className="text-xs text-[#71818a] mt-3 text-center">Saving…</p>}
-          </Card>
-        );
-      })()}
 
       <div className="grid lg:grid-cols-[1fr_260px] gap-5">
         <Card className="p-6">
@@ -2482,6 +2447,40 @@ function StudentSectionSeat({ me, state, showToast, setState, session }: {
               <Btn variant="secondary" onClick={() => setPendingSeat(null)} disabled={booking}>Cancel</Btn>
             </div>
           )}
+          {/* Group picker — shown after seat confirmed, inside the seat map card */}
+          {isOpen && me.assignedSectionId === preview.id && !me.group && (() => {
+            const studentsInGp = state.students.filter((s) => s.assignedSectionId === preview.id);
+            const g1Cap = Math.ceil(preview.capacity / 2);
+            const g2Cap = preview.capacity - g1Cap;
+            const g1Count = studentsInGp.filter((s) => s.group === 1).length;
+            const g2Count = studentsInGp.filter((s) => s.group === 2).length;
+            const g1Full = g1Count >= g1Cap;
+            const g2Full = g2Count >= g2Cap;
+            return (
+              <div className="mt-5 pt-5 border-t border-[#eef0e4]">
+                <p className="text-sm font-semibold text-[#0b1825] mb-1">Choose your group</p>
+                <p className="text-xs text-[#71818a] mb-3">Your seat is confirmed. Pick a group to complete your registration.</p>
+                <div className="flex gap-3">
+                  {([1, 2] as const).map((g) => {
+                    const count = g === 1 ? g1Count : g2Count;
+                    const cap   = g === 1 ? g1Cap   : g2Cap;
+                    const full  = g === 1 ? g1Full  : g2Full;
+                    return (
+                      <button key={g} onClick={() => !full && !savingGroup && pickGroup(g)} disabled={full || savingGroup}
+                        className={`flex-1 rounded-2xl border-2 px-5 py-4 text-left transition
+                          ${full
+                            ? "border-[#dde4cc] bg-[#f9faf3] opacity-50 cursor-not-allowed"
+                            : "border-[#dde4cc] bg-white hover:border-[#0b1825] hover:bg-[#f5f6ef] cursor-pointer"}`}>
+                        <p className="font-bold text-sm text-[#0b1825]">Group {g}</p>
+                        <p className="text-xs text-[#71818a] mt-0.5">{count}/{cap} students{full ? " — Full" : ""}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+                {savingGroup && <p className="text-xs text-[#71818a] mt-2 text-center">Saving…</p>}
+              </div>
+            );
+          })()}
         </Card>
 
         <Card className="p-5">
