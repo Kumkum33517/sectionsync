@@ -181,6 +181,32 @@ function Input({ label, ...props }: React.InputHTMLAttributes<HTMLInputElement> 
   );
 }
 
+
+// ─────────────────────────────────────────────────────────────────
+// Confirmation dialog overlay
+// ─────────────────────────────────────────────────────────────────
+function ConfirmDialog({ title, body, confirmLabel = 'Confirm', confirmVariant = 'primary', onConfirm, onCancel }: {
+  title: string;
+  body?: string;
+  confirmLabel?: string;
+  confirmVariant?: 'primary' | 'danger' | 'lime';
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+      <div className="bg-white rounded-2xl border border-[#dde4cc] shadow-xl max-w-sm w-full p-6 space-y-4">
+        <h3 className="font-display font-bold text-[#0b1825] text-lg">{title}</h3>
+        {body && <p className="text-sm text-[#71818a]">{body}</p>}
+        <div className="flex gap-3 pt-1">
+          <Btn onClick={onConfirm} variant={confirmVariant} className="flex-1">{confirmLabel}</Btn>
+          <Btn onClick={onCancel} variant="secondary" className="flex-1">Cancel</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PhaseBanner({ phase }: { phase: AppPhase }) {
   const icons: Record<AppPhase, React.ReactNode> = {
     SPEC_WINDOW_OPEN:    <Clock size={14} />,
@@ -828,20 +854,31 @@ function AdminSpecWindow({ state, showToast, setState, session }: {
 // ─────────────────────────────────────────────────────────────────
 
 /** Download final allocation Excel — same format as the uploaded sheet */
-function downloadAllocationExcel(state: AppState) {
-  const rows = state.students
-    .filter((s) => s.chosenSpecialization)
-    .map((s) => {
-      const sec = state.sections.find((sc) => sc.id === s.assignedSectionId);
+async function downloadAllocationExcel(token: string, specs: import("@/lib/section-sync-data").SpecializationDef[]) {
+  // Always fetch fresh data from the DB so section/group are never stale
+  const res = await fetch("/api/admin-students", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return;
+  const { data } = await res.json();
+
+  const rows = (data ?? [])
+    .filter((s: any) => s.chosen_specialization_id)
+    .sort((a: any, b: any) => (a.roll_number ?? "").localeCompare(b.roll_number ?? ""))
+    .map((s: any) => {
+      const specName = specs.find((sp) => sp.id === s.chosen_specialization_id)?.name ?? "—";
+      const sectionName = s.section?.name ?? "—";
+      const group = s.group_number ? `G${s.group_number}` : "—";
       return {
         "Student Name":   s.name,
-        "Roll No.":       s.rollNumber,
+        "Roll No.":       s.roll_number,
         "NCU Email Id":   s.email,
-        "Specialization": s.chosenSpecialization ?? "—",
-        "Section":        sec?.name ?? "—",
-        "Group":          s.group ? `G${s.group}` : "—",
+        "Specialization": specName,
+        "Section":        sectionName,
+        "Group":          group,
       };
     });
+
   const ws = XLSX.utils.json_to_sheet(rows);
   ws["!cols"] = [{ wch: 28 }, { wch: 14 }, { wch: 30 }, { wch: 28 }, { wch: 14 }, { wch: 8 }];
   const wb = XLSX.utils.book_new();
@@ -973,7 +1010,7 @@ function AdminSections({ state, showToast, setState, session }: {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {canExport && (
-            <Btn variant="secondary" onClick={() => downloadAllocationExcel(state)}>
+            <Btn variant="secondary" onClick={() => downloadAllocationExcel(session.accessToken ?? "", state.specializations)}>
               <Download size={14} /> Export Excel
             </Btn>
           )}
@@ -1143,7 +1180,7 @@ function AdminSectionWindow({ state, showToast, setState, session }: {
     })();
   };
 
-  const exportExcel = () => downloadAllocationExcel(state);
+  const exportExcel = () => downloadAllocationExcel(session.accessToken ?? "", state.specializations);
 
   return (
     <div className="space-y-5 max-w-2xl">
@@ -1378,6 +1415,7 @@ function AdminStudentList({ state, showToast, setState, session }: {
             ? (state.specializations.find((sp) => sp.id === s.chosen_specialization_id)?.name ?? null)
             : null,
           assignedSectionId:    s.assigned_section_id ?? null,
+          assignedSectionName:  s.section?.name ?? null,
           assignedSeat:         s.assigned_seat ?? null,
           group:                s.group_number ?? null,
         }));
@@ -1410,6 +1448,7 @@ function AdminStudentList({ state, showToast, setState, session }: {
       email: r.email,
       chosenSpecialization: null,
       assignedSectionId: null,
+      assignedSectionName: null,
       assignedSeat: null,
       group: null,
     }));
@@ -1568,7 +1607,7 @@ function AdminStudentList({ state, showToast, setState, session }: {
         });
         if (!res.ok) { const d = await res.json(); setFormErr(d.error ?? "Failed to add student."); return; }
       } catch { setFormErr("Network error."); return; }
-      setState((p) => ({ ...p, students: [...p.students, { id: `student-${Date.now()}`, name: name.trim(), rollNumber: rollNumber.trim(), email: email.trim().toLowerCase(), chosenSpecialization: null, assignedSectionId: null, assignedSeat: null, group: null }] }));
+      setState((p) => ({ ...p, students: [...p.students, { id: `student-${Date.now()}`, name: name.trim(), rollNumber: rollNumber.trim(), email: email.trim().toLowerCase(), chosenSpecialization: null, assignedSectionId: null, assignedSectionName: null, assignedSeat: null, group: null }] }));
       showToast("Student added.");
     }
     setShowAdd(false);
@@ -2038,6 +2077,11 @@ function StudentDashboard({ me, state }: { me: Student; state: AppState }) {
       done:   me.assignedSectionId !== null,
       active: state.phase === "SECTION_WINDOW_OPEN" && me.assignedSectionId === null,
     },
+    {
+      label: "Choose your group",
+      done:   me.group !== null,
+      active: state.phase === "SECTION_WINDOW_OPEN" && me.assignedSectionId !== null && me.group === null,
+    },
   ];
 
   return (
@@ -2071,24 +2115,17 @@ function StudentDashboard({ me, state }: { me: Student; state: AppState }) {
             : <p className="text-sm text-[#71818a] italic">Not selected yet</p>}
         </Card>
         <Card className="p-5">
-          <p className="text-xs text-[#71818a] mb-1">Section &amp; Seat</p>
-          {mySection && me.assignedSeat
-            ? <div><p className="font-bold text-[#0b1825]">{mySection.name}</p><p className="text-sm text-[#71818a]">Seat {me.assignedSeat}</p></div>
-            : <p className="text-sm text-[#71818a] italic">Not assigned yet</p>}
-        </Card>
-        <Card className="p-5 col-span-2">
-          <p className="text-xs text-[#71818a] mb-1">Group</p>
-          {me.group
+          <p className="text-xs text-[#71818a] mb-1">Section &amp; Group</p>
+          {mySection
             ? (
-              <div className="flex items-center gap-3">
-                <span className={`inline-flex items-center rounded-full px-4 py-1.5 text-sm font-bold border-2
-                  ${me.group === 1 ? "bg-blue-100 border-blue-400 text-blue-800" : "bg-violet-100 border-violet-400 text-violet-800"}`}>
-                  Group {me.group === 1 ? "G1" : "G2"}
-                </span>
-                <p className="text-xs text-[#71818a]">Assigned after section window closed</p>
+              <div>
+                <p className="font-bold text-[#0b1825]">{mySection.name}</p>
+                {me.group
+                  ? <p className="text-sm text-[#71818a]">Group {me.group}</p>
+                  : <p className="text-sm text-[#71818a] italic">Group assigned when window closes</p>}
               </div>
             )
-            : <p className="text-sm text-[#71818a] italic">Assigned when the section window closes</p>}
+            : <p className="text-sm text-[#71818a] italic">Not assigned yet</p>}
         </Card>
       </div>
     </div>
@@ -2215,6 +2252,11 @@ function StudentSectionSeat({ me, state, showToast, setState, session }: {
 }) {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(me.assignedSectionId);
   const [hoveredSeat, setHoveredSeat] = useState<number | null>(null);
+  const [pendingSeat, setPendingSeat] = useState<number | null>(null); // selected but not yet confirmed
+  const [booking, setBooking] = useState(false);
+  // After seat is booked, show group picker for the section the seat was booked in
+  const [groupPickSection, setGroupPickSection] = useState<string | null>(null);
+  const [savingGroup, setSavingGroup] = useState(false);
   const isOpen = state.phase === "SECTION_WINDOW_OPEN";
 
   if (!me.chosenSpecialization) {
@@ -2254,25 +2296,58 @@ function StudentSectionSeat({ me, state, showToast, setState, session }: {
   const taken      = takenSeats(preview, state.students);
   const studentsIn = state.students.filter((s) => s.assignedSectionId === preview.id);
 
-  const confirmSeat = async (seat: number) => {
-    if (!isOpen) { showToast("Section selection is closed.", true); return; }
-    if (taken.includes(seat) && !(me.assignedSectionId === preview.id && me.assignedSeat === seat)) {
-      showToast("That seat is already taken.", true); return;
-    }
+  // Step 1: student clicks a seat — just highlights it, nothing booked yet
+  const selectSeat = (seat: number) => {
+    if (!isOpen) return;
+    if (taken.includes(seat) && !(me.assignedSectionId === preview.id && me.assignedSeat === seat)) return;
+    setPendingSeat(seat === pendingSeat ? null : seat); // toggle off if same seat clicked again
+  };
+
+  // Step 2: student clicks Confirm — actually books the seat via API
+  const bookSeat = async () => {
+    if (!pendingSeat || !isOpen) return;
+    setBooking(true);
     try {
       const res = await fetch("/api/book-seat", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
-        body: JSON.stringify({ section_id: preview.id, seat_number: seat }),
+        body: JSON.stringify({ section_id: preview.id, seat_number: pendingSeat }),
       });
       const data = await res.json();
-      if (!res.ok) { showToast(data.error ?? "Booking failed. Try again.", true); return; }
-      // Update local state so dashboard reflects immediately
+      if (!res.ok) {
+        showToast(data.error ?? "Booking failed. Try again.", true);
+        setPendingSeat(null);
+        setBooking(false);
+        return;
+      }
       setState((p) => ({
-        ...p, students: p.students.map((s) => s.id === me.id ? { ...s, assignedSectionId: preview.id, assignedSeat: seat } : s),
+        ...p, students: p.students.map((s) => s.id === me.id
+          ? { ...s, assignedSectionId: preview.id, assignedSectionName: preview.name, assignedSeat: pendingSeat }
+          : s),
       }));
-      showToast(`Seat ${seat} in ${preview.name} confirmed!`);
+      showToast(`Seat ${pendingSeat} in ${preview.name} confirmed!`);
+      setPendingSeat(null);
+      // Trigger group picker for this section
+      setGroupPickSection(preview.id);
     } catch { showToast("Network error. Try again.", true); }
+    setBooking(false);
+  };
+
+  // ── Group picker ──────────────────────────────────────────
+  const pickGroup = async (group: 1 | 2) => {
+    setSavingGroup(true);
+    try {
+      const res = await fetch("/api/admin-students", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.accessToken ?? ""}` },
+        body: JSON.stringify({ id: me.id, group_number: group }),
+      });
+      if (!res.ok) { showToast("Could not save group. Try again.", true); setSavingGroup(false); return; }
+      setState((p) => ({ ...p, students: p.students.map((s) => s.id === me.id ? { ...s, group } : s) }));
+      showToast(`Group ${group} confirmed!`);
+      setGroupPickSection(null);
+    } catch { showToast("Network error. Try again.", true); }
+    setSavingGroup(false);
   };
 
   const COLS = 10;
@@ -2300,12 +2375,52 @@ function StudentSectionSeat({ me, state, showToast, setState, session }: {
         })}
       </div>
 
+      {/* ── Group picker — shown after seat is booked or if seat exists but group is not set ── */}
+      {isOpen && me.assignedSectionId && !me.group && (() => {
+        const gpSectionId = groupPickSection ?? me.assignedSectionId;
+        const gpSection = state.sections.find((s) => s.id === gpSectionId);
+        if (!gpSection) return null;
+        const studentsInGp = state.students.filter((s) => s.assignedSectionId === gpSectionId);
+        const g1Cap = Math.ceil(gpSection.capacity / 2);
+        const g2Cap = gpSection.capacity - g1Cap;
+        const g1Count = studentsInGp.filter((s) => s.group === 1).length;
+        const g2Count = studentsInGp.filter((s) => s.group === 2).length;
+        const g1Full = g1Count >= g1Cap;
+        const g2Full = g2Count >= g2Cap;
+        return (
+          <Card className="p-5 border-2 border-[#d8ff5b]">
+            <h3 className="font-semibold text-[#0b1825] mb-1">Choose your group</h3>
+            <p className="text-sm text-[#71818a] mb-4">
+              Your seat in <strong>{gpSection.name}</strong> is confirmed. Now pick your group.
+            </p>
+            <div className="flex gap-3">
+              {([1, 2] as const).map((g) => {
+                const count = g === 1 ? g1Count : g2Count;
+                const cap   = g === 1 ? g1Cap   : g2Cap;
+                const full  = g === 1 ? g1Full  : g2Full;
+                return (
+                  <button key={g} onClick={() => !full && !savingGroup && pickGroup(g)} disabled={full || savingGroup}
+                    className={`flex-1 rounded-2xl border-2 px-5 py-4 text-left transition
+                      ${full ? "border-[#dde4cc] bg-[#f9faf3] opacity-50 cursor-not-allowed"
+                             : "border-[#dde4cc] bg-white hover:border-[#0b1825] hover:bg-[#f5f6ef] cursor-pointer"}`}>
+                    <p className="font-bold text-base text-[#0b1825]">Group {g}</p>
+                    <p className="text-xs text-[#71818a] mt-0.5">{count}/{cap} students{full ? " — Full" : ""}</p>
+                  </button>
+                );
+              })}
+            </div>
+            {savingGroup && <p className="text-xs text-[#71818a] mt-3 text-center">Saving…</p>}
+          </Card>
+        );
+      })()}
+
       <div className="grid lg:grid-cols-[1fr_260px] gap-5">
         <Card className="p-6">
           <div className="flex items-center justify-between mb-5">
             <h3 className="font-semibold text-[#0b1825]">{preview.name} — Seat map</h3>
             <div className="flex items-center gap-4 text-xs text-[#71818a]">
               <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#f0f2e4] border border-[#dde4cc]" />Available</span>
+              <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-blue-500" />Selected</span>
               <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#d8ff5b]" />Yours</span>
               <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded bg-[#0b1825]" />Taken</span>
             </div>
@@ -2325,18 +2440,20 @@ function StudentSectionSeat({ me, state, showToast, setState, session }: {
                     const isMine   = me.assignedSectionId === preview.id && me.assignedSeat === seat;
                     const isTaken  = taken.includes(seat) && !isMine;
                     const isHov    = hoveredSeat === seat;
+                    const isPending = pendingSeat === seat;
                     return (
                       <button key={seat}
-                        onClick={() => confirmSeat(seat)}
+                        onClick={() => selectSeat(seat)}
                         onMouseEnter={() => setHoveredSeat(seat)}
                         onMouseLeave={() => setHoveredSeat(null)}
                         disabled={isTaken || (!isOpen && !isMine)}
-                        title={isTaken ? "Taken" : isMine ? `Your seat (${seat})` : `Seat ${seat}`}
+                        title={isTaken ? "Taken" : isMine ? `Your seat (${seat})` : `Seat ${seat} — click to select`}
                         className={`h-8 w-8 rounded-lg text-[10px] font-bold border transition
-                          ${isMine   ? "bg-[#d8ff5b] border-[#b8df3b] text-[#0b1825]"
-                          : isTaken  ? "bg-[#0b1825] border-[#0b1825] text-[#3a5060] cursor-not-allowed"
-                          : isHov    ? "bg-[#0b1825] border-[#0b1825] text-white"
-                          :            "bg-[#f0f2e4] border-[#dde4cc] text-[#71818a] hover:border-[#0b1825]"}`}>
+                          ${isMine    ? "bg-[#d8ff5b] border-[#b8df3b] text-[#0b1825]"
+                          : isPending ? "bg-blue-500 border-blue-600 text-white ring-2 ring-blue-300"
+                          : isTaken   ? "bg-[#0b1825] border-[#0b1825] text-[#3a5060] cursor-not-allowed"
+                          : isHov     ? "bg-[#0b1825] border-[#0b1825] text-white"
+                          :             "bg-[#f0f2e4] border-[#dde4cc] text-[#71818a] hover:border-[#0b1825]"}`}>
                         {seat}
                       </button>
                     );
@@ -2345,14 +2462,25 @@ function StudentSectionSeat({ me, state, showToast, setState, session }: {
               </div>
             ))}
           </div>
-          {hoveredSeat && (
+          {hoveredSeat && !pendingSeat && (
             <p className="text-xs text-[#71818a] mt-4 text-center">
               {taken.includes(hoveredSeat) && !(me.assignedSectionId === preview.id && me.assignedSeat === hoveredSeat)
                 ? `Seat ${hoveredSeat} is already taken`
                 : me.assignedSectionId === preview.id && me.assignedSeat === hoveredSeat
                   ? `Seat ${hoveredSeat} — your current seat`
-                  : `Click to take seat ${hoveredSeat}`}
+                  : `Click to select seat ${hoveredSeat}`}
             </p>
+          )}
+          {pendingSeat && isOpen && (
+            <div className="mt-4 flex items-center justify-center gap-3">
+              <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-2 text-sm text-blue-800 font-medium">
+                Seat {pendingSeat} selected — confirm to book
+              </div>
+              <Btn onClick={bookSeat} disabled={booking} variant="lime">
+                {booking ? "Booking…" : <><Check size={13} /> Confirm</>}
+              </Btn>
+              <Btn variant="secondary" onClick={() => setPendingSeat(null)} disabled={booking}>Cancel</Btn>
+            </div>
           )}
         </Card>
 
@@ -2400,6 +2528,8 @@ function StudentSwapRequests({ me, state, showToast, setState }: {
   const [targetId, setTargetId] = useState("");
   const [note, setNote] = useState("");
   const [tab, setTab] = useState<"sent" | "received">("sent");
+  // pendingAction holds the swap+type awaiting explicit confirmation
+  const [pendingAction, setPendingAction] = useState<{ type: "accept" | "reject" | "cancel"; req: SwapRequest } | null>(null);
 
   const isOpen = state.phase === "SECTION_WINDOW_OPEN";
   const mySection = state.sections.find((s) => s.id === me.assignedSectionId);
@@ -2498,7 +2628,40 @@ function StudentSwapRequests({ me, state, showToast, setState }: {
       && s.assignedSectionId !== me.assignedSectionId
   );
 
+
+  // ── Resolve pendingAction ──────────────────────────────────────
+  const executePending = () => {
+    if (!pendingAction) return;
+    const { type, req } = pendingAction;
+    if (type === "accept") acceptSwap(req);
+    else if (type === "reject") rejectSwap(req);
+    else cancelSwap(req);
+    setPendingAction(null);
+  };
+
+  const dialogMeta: Record<"accept" | "reject" | "cancel", { title: string; body: string; label: string; variant: "primary" | "danger" | "lime" }> = {
+    accept: {
+      title: "Accept this swap?",
+      body: "Your sections will be exchanged immediately. This cannot be undone.",
+      label: "Yes, accept swap",
+      variant: "primary",
+    },
+    reject: {
+      title: "Decline this swap request?",
+      body: "The other student will be notified that you declined.",
+      label: "Decline",
+      variant: "danger",
+    },
+    cancel: {
+      title: "Cancel your swap request?",
+      body: "Your outgoing swap request will be withdrawn.",
+      label: "Yes, cancel it",
+      variant: "danger",
+    },
+  };
+
   return (
+    <>
     <div className="space-y-5 max-w-2xl">
       <div>
         <h2 className="font-display text-xl font-bold text-[#0b1825]">Swap requests</h2>
@@ -2584,7 +2747,7 @@ function StudentSwapRequests({ me, state, showToast, setState }: {
                 </div>
                 {statusBadge(req.status)}
                 {req.status === "PENDING" && isOpen && (
-                  <button onClick={() => cancelSwap(req)}
+                  <button onClick={() => setPendingAction({ type: "cancel", req })}
                     className="text-xs text-[#71818a] hover:text-red-600 underline transition">Cancel</button>
                 )}
               </Card>
@@ -2610,8 +2773,8 @@ function StudentSwapRequests({ me, state, showToast, setState }: {
                   <Badge color="yellow">Pending</Badge>
                 </div>
                 <div className="flex gap-2">
-                  <Btn onClick={() => acceptSwap(req)} className="flex-1">Accept swap</Btn>
-                  <Btn variant="secondary" onClick={() => rejectSwap(req)} className="flex-1">Decline</Btn>
+                  <Btn onClick={() => setPendingAction({ type: "accept", req })} className="flex-1">Accept swap</Btn>
+                  <Btn variant="secondary" onClick={() => setPendingAction({ type: "reject", req })} className="flex-1">Decline</Btn>
                 </div>
               </Card>
             );
@@ -2619,6 +2782,18 @@ function StudentSwapRequests({ me, state, showToast, setState }: {
         </div>
       )}
     </div>
+
+      {pendingAction && (
+        <ConfirmDialog
+          title={dialogMeta[pendingAction.type].title}
+          body={dialogMeta[pendingAction.type].body}
+          confirmLabel={dialogMeta[pendingAction.type].label}
+          confirmVariant={dialogMeta[pendingAction.type].variant}
+          onConfirm={executePending}
+          onCancel={() => setPendingAction(null)}
+        />
+      )}
+    </>
   );
 }
 
@@ -2697,7 +2872,11 @@ export default function Index() {
   const [session, setSession]       = useState<Session>(null);
   const [sessionChecked, setSessionChecked] = useState(false); // true once we know if a session exists
   const [state, setState]           = useState<AppState>(() => createInitialData());
-  const [adminPage, setAdminPage]   = useState<AdminPage>("dashboard");
+  const [adminPage, setAdminPage]   = useState<AdminPage>(() => {
+    const saved = sessionStorage.getItem("adminPage") as AdminPage | null;
+    const valid: AdminPage[] = ["dashboard","specializations","spec-window","sections","section-window","students","student-list","admin-access","change-password"];
+    return saved && valid.includes(saved) ? saved : "dashboard";
+  });
   const [studentPage, setStudentPage] = useState<StudentPage>(() => {
     // Restore page on refresh; sessionStorage clears on new tab/window so new logins start at dashboard
     const saved = sessionStorage.getItem("studentPage") as StudentPage | null;
@@ -2784,6 +2963,7 @@ export default function Index() {
                         ? (freshSpecs.find((sp) => sp.id === s.chosen_specialization_id)?.name ?? null)
                         : null,
                       assignedSectionId: s.assigned_section_id ?? null,
+                      assignedSectionName: s.section?.name ?? null,
                       assignedSeat: s.assigned_seat ?? null,
                       group: s.group_number ?? null,
                     })),
@@ -2838,7 +3018,7 @@ export default function Index() {
         );
         const { data } = await userClient
           .from("students")
-          .select("id, roll_number, name, email, year, chosen_specialization_id, assigned_section_id, assigned_seat, group_number")
+          .select("id, roll_number, name, email, year, chosen_specialization_id, assigned_section_id, assigned_seat, group_number, section:assigned_section_id(id,name)")
           .eq("email", s.email.toLowerCase())
           .maybeSingle();
         if (data) {
@@ -2854,6 +3034,7 @@ export default function Index() {
             email:                data.email,
             chosenSpecialization: chosenSpec,
             assignedSectionId:    data.assigned_section_id ?? null,
+            assignedSectionName:  (data as any).section?.name ?? null,
             assignedSeat:         data.assigned_seat ?? null,
             group:                data.group_number ?? null,
           };
@@ -2883,13 +3064,12 @@ export default function Index() {
     setSession(s);
   };
 
-  // Persist current student page so refresh returns to the same page
-  // (sessionStorage is cleared when the browser tab is closed, so new logins start fresh)
+  // Persist current page so refresh returns to the same page
+  // sessionStorage clears when the tab is closed — new logins start at dashboard
   useEffect(() => {
-    if (session?.role === "student") {
-      sessionStorage.setItem("studentPage", studentPage);
-    }
-  }, [studentPage, session]);
+    if (session?.role === "student") sessionStorage.setItem("studentPage", studentPage);
+    if (session?.role === "admin")   sessionStorage.setItem("adminPage", adminPage);
+  }, [studentPage, adminPage, session]);
 
   if (!sessionChecked) return (
     <div className="min-h-screen bg-[#f5f6ef] flex items-center justify-center">
@@ -2921,6 +3101,7 @@ export default function Index() {
           setAdminPage("dashboard");
           setStudentPage("dashboard");
           sessionStorage.removeItem("studentPage");
+          sessionStorage.removeItem("adminPage");
         }}
       >
         {isAdmin && (

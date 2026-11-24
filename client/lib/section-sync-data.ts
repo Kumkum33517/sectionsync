@@ -46,6 +46,8 @@ export interface Student {
   /** The specialization name chosen during spec-selection window */
   chosenSpecialization: string | null;
   assignedSectionId: string | null;
+  /** Resolved section name — populated from the API join so exports never depend on state.sections */
+  assignedSectionName: string | null;
   assignedSeat: number | null;
   /** Assigned when section window closes: 1 = G1, 2 = G2 */
   group: 1 | 2 | null;
