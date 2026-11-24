@@ -2604,6 +2604,46 @@ function StudentSwapRequests({ me, state, showToast, setState, session }: {
   const isOpen = state.phase === "SECTION_WINDOW_OPEN" && !state.sectionWindowNewOnly;
   const mySection = state.sections.find((s) => s.id === me.assignedSectionId);
 
+  // ── Load all peers in the same specialization on mount ─────────
+  useEffect(() => {
+    if (!me.chosenSpecialization) return;
+    const specId = state.specializations.find((s) => s.name === me.chosenSpecialization)?.id;
+    if (!specId) return;
+    const userClient = createClient(
+      import.meta.env.VITE_SUPABASE_URL as string,
+      import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+      { global: { headers: { Authorization: `Bearer ${session.accessToken ?? ""}` } } }
+    );
+    Promise.resolve(
+      userClient
+        .from("student_peers")
+        .select("id, name, roll_number, chosen_specialization_id, assigned_section_id, assigned_seat, group_number")
+        .eq("chosen_specialization_id", specId)
+    ).then(({ data: peers }) => {
+        if (!peers?.length) return;
+        setState((p) => {
+          const myRecord = p.students.find((s) => s.id === me.id);
+          const peerList = peers.map((r: any) => {
+            const existing = p.students.find((s) => s.id === r.id);
+            return {
+              id: r.id, name: r.name, rollNumber: r.roll_number, email: existing?.email ?? "",
+              chosenSpecialization: me.chosenSpecialization,
+              assignedSectionId: r.assigned_section_id ?? null,
+              assignedSectionName: existing?.assignedSectionName ?? null,
+              assignedSeat: r.assigned_seat ?? null,
+              group: r.group_number ?? null,
+            };
+          });
+          const merged = [
+            ...(myRecord ? [myRecord] : []),
+            ...peerList.filter((ps: any) => ps.id !== me.id),
+          ];
+          return { ...p, students: merged };
+        });
+      })
+      .catch(() => {});
+  }, [me.id, me.chosenSpecialization]);
+
   // ── Load swap requests from DB on mount and subscribe realtime ──
   useEffect(() => {
     if (!me.id) return;

@@ -417,7 +417,7 @@ create policy "otp_no_direct_access" on public.otp_attempts
 --      map and swap requests without exposing email or auth_id.
 -- ─────────────────────────────────────────────────────────────────
 create or replace view public.student_peers
-  with (security_invoker = true)
+  with (security_invoker = false)
 as
   select
     id,
