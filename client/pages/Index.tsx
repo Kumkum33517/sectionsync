@@ -2980,7 +2980,7 @@ function ChangePasswordPage({ session, showToast }: {
     e.preventDefault();
     setError("");
     if (!current || !newPass || !confirm) { setError("All fields are required."); return; }
-    if (newPass.length < 6) { setError("New password must be at least 6 characters."); return; }
+    if (newPass.length < 8) { setError("New password must be at least 8 characters."); return; }
     if (newPass !== confirm) { setError("Passwords do not match."); return; }
 
     setLoading(true);

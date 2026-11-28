@@ -36,7 +36,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // @ts-ignore — TS5 type compat
     const { error: authCreateErr } = await adminSupabase.auth.admin.createUser({
       email: em,
-      password: "admin@sectionsync1",
+      password: "Admin@!9182",
       email_confirm: true,
     });
     if (authCreateErr) console.error("[admin-admins] createUser error:", authCreateErr.message);
