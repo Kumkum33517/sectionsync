@@ -350,7 +350,7 @@ function ForgotPasswordScreen({ onBack }: { onBack: () => void }) {
     if (!em) { setError("Enter your email address."); return; }
     setLoading(true);
     const { error: err } = await supabase.auth.resetPasswordForEmail(em, {
-      redirectTo: `${window.location.origin}/?type=recovery`,
+      redirectTo: `${window.location.origin}/`,
     });
     setLoading(false);
     if (err) { setError("Could not send reset email. Check the address and try again."); return; }
@@ -459,15 +459,23 @@ function ResetPasswordScreen({ onDone }: { onDone: () => void }) {
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-[#0b1825] mb-1.5">New password</label>
-                  <input type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)}
-                    placeholder="At least 8 characters" autoFocus
-                    className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-4 py-2.5 text-sm outline-none focus:border-[#0b1825] focus:ring-2 focus:ring-[#0b1825]/10 transition" />
+                  <div className="relative">
+                    <input id="reset-new" type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)}
+                      placeholder="At least 8 characters" autoFocus
+                      className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-4 py-2.5 pr-10 text-sm outline-none focus:border-[#0b1825] focus:ring-2 focus:ring-[#0b1825]/10 transition" />
+                    <button type="button" onClick={() => { const el = document.getElementById("reset-new") as HTMLInputElement; el.type = el.type === "password" ? "text" : "password"; }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#71818a] hover:text-[#0b1825] transition text-xs">Show</button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-[#0b1825] mb-1.5">Confirm password</label>
-                  <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
-                    placeholder="Repeat your new password"
-                    className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-4 py-2.5 text-sm outline-none focus:border-[#0b1825] focus:ring-2 focus:ring-[#0b1825]/10 transition" />
+                  <div className="relative">
+                    <input id="reset-confirm" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
+                      placeholder="Repeat your new password"
+                      className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-4 py-2.5 pr-10 text-sm outline-none focus:border-[#0b1825] focus:ring-2 focus:ring-[#0b1825]/10 transition" />
+                    <button type="button" onClick={() => { const el = document.getElementById("reset-confirm") as HTMLInputElement; el.type = el.type === "password" ? "text" : "password"; }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#71818a] hover:text-[#0b1825] transition text-xs">Show</button>
+                  </div>
                 </div>
                 {error && (
                   <p className="text-sm text-red-600 flex items-center gap-1.5">
@@ -3211,18 +3219,27 @@ export default function Index() {
   // Load all data from Supabase on startup
   useEffect(() => {
     (async () => {
-      // Detect Supabase password-recovery redirect (?type=recovery in the URL hash)
+      // Detect Supabase password-recovery via onAuthStateChange
+      // Supabase auto-parses the hash tokens and fires PASSWORD_RECOVERY
+      const { data: { subscription: recoverySub } } = supabase.auth.onAuthStateChange((event) => {
+        if (event === "PASSWORD_RECOVERY") {
+          recoverySub.unsubscribe();
+          setIsRecovery(true);
+          setSessionChecked(true);
+        }
+      });
+      // Also check if we already have a recovery session from a previous parse
       const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-      const qParams    = new URLSearchParams(window.location.search);
-      if (hashParams.get("type") === "recovery" || qParams.get("type") === "recovery") {
-        // Supabase embeds the session in the URL hash — exchange it
+      if (hashParams.get("type") === "recovery") {
+        // Give onAuthStateChange a tick to fire, then check session directly
+        await new Promise<void>((resolve) => setTimeout(resolve, 300));
         const { data: { session: recoverySess } } = await supabase.auth.getSession();
         if (recoverySess) {
-          await supabase.auth.setSession({ access_token: recoverySess.access_token, refresh_token: recoverySess.refresh_token });
+          recoverySub.unsubscribe();
+          setIsRecovery(true);
+          setSessionChecked(true);
+          return;
         }
-        setIsRecovery(true);
-        setSessionChecked(true);
-        return; // Skip normal session restore — just show the reset form
       }
 
       // Load specializations, config, and sections in parallel FIRST so they're
