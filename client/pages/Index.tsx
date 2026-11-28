@@ -1,7 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { createClient } from "@supabase/supabase-js";
 import { FormEvent, useEffect, useState } from "react";
-import * as XLSX from "xlsx";
 import {
   AlertTriangle,
   ArrowLeftRight,
@@ -884,6 +883,7 @@ function AdminSpecWindow({ state, showToast, setState, session }: {
 
 /** Download final allocation Excel — same format as the uploaded sheet */
 async function downloadAllocationExcel(token: string, specs: import("@/lib/section-sync-data").SpecializationDef[]) {
+  const XLSX = await import("xlsx");
   // Always fetch fresh data from the DB so section/group are never stale
   const res = await fetch("/api/admin-students", {
     headers: { Authorization: `Bearer ${token}` },
@@ -1505,6 +1505,7 @@ function AdminStudentList({ state, showToast, setState, session }: {
   }
 
   async function parseExcel(file: File): Promise<Student[]> {
+    const XLSX = await import("xlsx");
     const buf = await file.arrayBuffer();
     const wb  = XLSX.read(buf, { type: "array" });
     const ws  = wb.Sheets[wb.SheetNames[0]];
@@ -1726,7 +1727,8 @@ function AdminStudentList({ state, showToast, setState, session }: {
     showToast("Student removed.");
   };
 
-  const downloadTemplate = () => {
+  const downloadTemplate = async () => {
+    const XLSX = await import("xlsx");
     const ws = XLSX.utils.aoa_to_sheet([
       ["Name", "Roll Number", "Email"],
       ["Kumkum Singh", "22CSU001", "22csu001@ncuindia.edu"],

@@ -18,12 +18,18 @@ export default defineConfig({
   },
   build: {
     outDir: "dist/spa",
-    // Never ship source maps to production — prevents source code exposure
     sourcemap: false,
-    // Single-page app — large bundle is expected; suppress the advisory warning
-    chunkSizeWarningLimit: 1200,
-    // Strip console.log and debugger statements from production build
+    chunkSizeWarningLimit: 600,
     minify: "esbuild",
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom")) return "react-vendor";
+          if (id.includes("node_modules/@supabase")) return "supabase-vendor";
+          if (id.includes("node_modules/lucide-react")) return "ui-vendor";
+        },
+      },
+    },
   },
   plugins: [react()],
   resolve: {
