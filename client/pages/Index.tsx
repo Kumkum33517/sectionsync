@@ -3317,7 +3317,6 @@ export default function Index() {
     }
     setSession(s);
   };
-  };
 
   // Persist current page so refresh returns to the same page
   // sessionStorage clears when the tab is closed — new logins start at dashboard
