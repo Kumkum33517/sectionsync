@@ -3182,135 +3182,141 @@ export default function Index() {
           import.meta.env.VITE_SUPABASE_ANON_KEY as string,
           { global: { headers: { Authorization: `Bearer ${s.accessToken}` } } }
         );
-        const { data } = await userClient
-          .from("students")
-          .select("id, roll_number, name, email, year, chosen_specialization_id, assigned_section_id, assigned_seat, group_number, section:assigned_section_id(id,name)")
-          .eq("email", s.email.toLowerCase())
-          .maybeSingle();
-        if (data) {
-          // Use specsOverride if provided — avoids stale closure when called from startup
-          const specs = specsOverride ?? state.specializations;
-          const chosenSpec = data.chosen_specialization_id
-            ? (specs.find((sp) => sp.id === data.chosen_specialization_id)?.name ?? null)
-            : null;
-          const student: Student = {
-            id:                   data.id,
-            rollNumber:           data.roll_number,
-            name:                 data.name,
-            email:                data.email,
-            chosenSpecialization: chosenSpec,
-            assignedSectionId:    data.assigned_section_id ?? null,
-            assignedSectionName:  (data as any).section?.name ?? null,
-            assignedSeat:         data.assigned_seat ?? null,
-            group:                data.group_number ?? null,
-          };
-          setState((p) => ({ ...p, students: [student] }));
-          setSession({ ...s, studentId: data.id });
-          // Always land on dashboard after a fresh login (not a page refresh)
-          setStudentPage("dashboard");
-          sessionStorage.removeItem("studentPage");
-          // Load sections + all peers in same specialization, then subscribe realtime
-          void (async () => {
-            try {
-              const { data: secData } = await userClient.from("sections")
-                .select("id, name, capacity, specialization_id, specialization:specialization_id(id,name,batch)")
-                .order("name");
-              if (secData && secData.length > 0) {
-                const sections = secData.map((sec: any) => ({
-                  id: sec.id, name: sec.name, capacity: sec.capacity,
-                  specializationId: sec.specialization_id,
-                  specializationName: sec.specialization?.name ?? "",
-                  occupancy: 0,
-                }));
-                setState((p) => ({ ...p, sections }));
-              }
-            } catch { /* ignore */ }
 
-            // Load all peers in the same specialization so the seat map shows real occupancy
-            try {
-              if (data.chosen_specialization_id) {
-                const { data: peers } = await userClient
-                  .from("student_peers")
-                  .select("id, name, roll_number, chosen_specialization_id, assigned_section_id, assigned_seat, group_number")
-                  .eq("chosen_specialization_id", data.chosen_specialization_id);
-                if (peers && peers.length > 0) {
-                  const specs = specsOverride ?? state.specializations;
-                  const peerStudents = peers.map((p: any) => ({
-                    id: p.id, name: p.name, rollNumber: p.roll_number, email: "",
-                    chosenSpecialization: specs.find((sp) => sp.id === p.chosen_specialization_id)?.name ?? null,
-                    assignedSectionId: p.assigned_section_id ?? null,
-                    assignedSectionName: null,
-                    assignedSeat: p.assigned_seat ?? null,
-                    group: p.group_number ?? null,
-                  }));
-                  setState((p) => ({
-                    ...p,
-                    // Keep the logged-in student's own full record, merge peers
-                    students: [
-                      student,
-                      ...peerStudents.filter((ps: any) => ps.id !== student.id),
-                    ],
-                  }));
-                }
-              }
-            } catch { /* ignore */ }
+        // Run all fetches in parallel — specs, own student row, sections, peers
+        const [specsRes, studentRes, sectionsRes] = await Promise.all([
+          userClient.from("specializations").select("*").eq("active", true).order("name"),
+          userClient
+            .from("students")
+            .select("id, roll_number, name, email, year, chosen_specialization_id, assigned_section_id, assigned_seat, group_number, section:assigned_section_id(id,name)")
+            .eq("email", s.email.toLowerCase())
+            .maybeSingle(),
+          userClient
+            .from("sections")
+            .select("id, name, capacity, specialization_id, specialization:specialization_id(id,name,batch)")
+            .order("name"),
+        ]);
 
-            // Realtime: subscribe to changes on students in same specialization
-            try {
-              if (data.chosen_specialization_id) {
-                const specId = data.chosen_specialization_id;
-                const refreshPeers = async () => {
-                  try {
-                    const { data: fresh } = await userClient
-                      .from("student_peers")
-                      .select("id, name, roll_number, chosen_specialization_id, assigned_section_id, assigned_seat, group_number")
-                      .eq("chosen_specialization_id", specId);
-                    if (!fresh) return;
-                    setState((p) => {
-                      const specs = p.specializations;
-                      const myRecord = p.students.find((s) => s.email === data.email);
-                      const peerList = fresh.map((r: any) => {
-                        const existing = p.students.find((s) => s.id === r.id);
-                        return {
-                          id: r.id,
-                          name: r.name,
-                          rollNumber: r.roll_number,
-                          email: existing?.email ?? "",
-                          chosenSpecialization: specs.find((sp) => sp.id === r.chosen_specialization_id)?.name ?? null,
-                          assignedSectionId: r.assigned_section_id ?? null,
-                          assignedSectionName: existing?.assignedSectionName ?? null,
-                          assignedSeat: r.assigned_seat ?? null,
-                          group: r.group_number ?? null,
-                        };
-                      });
-                      // Merge: keep own full record, replace/add peers
-                      const merged = [
-                        ...(myRecord ? [myRecord] : []),
-                        ...peerList.filter((ps: any) => ps.id !== (myRecord?.id ?? "")),
-                      ];
-                      return { ...p, students: merged };
-                    });
-                  } catch { /* ignore */ }
-                };
+        // Resolve specs — authenticated fetch gets real UUIDs
+        let activeSpecs: SpecializationDef[] = specsOverride ?? [];
+        if (specsRes.data && specsRes.data.length > 0) {
+          activeSpecs = specsRes.data.map((sp: any) => ({
+            id: sp.id, name: sp.name, batch: sp.batch ?? "2024-25",
+            active: sp.active ?? true, description: sp.description ?? undefined, createdAt: sp.created_at,
+          }));
+        }
 
-                const channel = supabase
-                  .channel(`student-peers-${specId}`)
-                  .on("postgres_changes", {
-                    event: "*",
-                    schema: "public",
-                    table: "students",
-                    filter: `chosen_specialization_id=eq.${specId}`,
-                  }, () => { refreshPeers(); })
-                  .subscribe();
-                window.addEventListener("beforeunload", () => supabase.removeChannel(channel), { once: true });
-              }
-            } catch { /* ignore */ }
-          })();
+        const data = studentRes.data;
+        if (!data) {
+          setSession(s);
           return;
         }
+
+        const chosenSpec = data.chosen_specialization_id
+          ? (activeSpecs.find((sp) => sp.id === data.chosen_specialization_id)?.name ?? null)
+          : null;
+
+        const student: Student = {
+          id:                   data.id,
+          rollNumber:           data.roll_number,
+          name:                 data.name,
+          email:                data.email,
+          chosenSpecialization: chosenSpec,
+          assignedSectionId:    data.assigned_section_id ?? null,
+          assignedSectionName:  (data as any).section?.name ?? null,
+          assignedSeat:         data.assigned_seat ?? null,
+          group:                data.group_number ?? null,
+        };
+
+        // Resolve sections
+        const sections = (sectionsRes.data ?? []).map((sec: any) => ({
+          id: sec.id, name: sec.name, capacity: sec.capacity,
+          specializationId: sec.specialization_id,
+          specializationName: sec.specialization?.name ?? "",
+          occupancy: 0,
+        }));
+
+        // Fetch peers in parallel (depends on chosen_specialization_id from student row)
+        let peerStudents: Student[] = [];
+        if (data.chosen_specialization_id) {
+          try {
+            const { data: peers } = await userClient
+              .from("student_peers")
+              .select("id, name, roll_number, chosen_specialization_id, assigned_section_id, assigned_seat, group_number")
+              .eq("chosen_specialization_id", data.chosen_specialization_id);
+            if (peers && peers.length > 0) {
+              peerStudents = peers
+                .filter((p: any) => p.id !== student.id)
+                .map((p: any) => ({
+                  id: p.id, name: p.name, rollNumber: p.roll_number, email: "",
+                  chosenSpecialization: activeSpecs.find((sp) => sp.id === p.chosen_specialization_id)?.name ?? null,
+                  assignedSectionId: p.assigned_section_id ?? null,
+                  assignedSectionName: null,
+                  assignedSeat: p.assigned_seat ?? null,
+                  group: p.group_number ?? null,
+                }));
+            }
+          } catch { /* ignore */ }
+        }
+
+        // Set all state in one shot — one render, no flash
+        setState((p) => ({
+          ...p,
+          specializations: activeSpecs.length > 0 ? activeSpecs : p.specializations,
+          sections,
+          students: [student, ...peerStudents],
+        }));
+        setSession({ ...s, studentId: data.id });
+        setStudentPage("dashboard");
+        sessionStorage.removeItem("studentPage");
+
+        // Set up realtime peer subscription
+        if (data.chosen_specialization_id) {
+          const specId = data.chosen_specialization_id;
+          const refreshPeers = async () => {
+            try {
+              const { data: fresh } = await userClient
+                .from("student_peers")
+                .select("id, name, roll_number, chosen_specialization_id, assigned_section_id, assigned_seat, group_number")
+                .eq("chosen_specialization_id", specId);
+              if (!fresh) return;
+              setState((p) => {
+                const myRecord = p.students.find((st) => st.id === student.id);
+                const peerList = fresh.map((r: any) => {
+                  const existing = p.students.find((st) => st.id === r.id);
+                  return {
+                    id: r.id, name: r.name, rollNumber: r.roll_number,
+                    email: existing?.email ?? "",
+                    chosenSpecialization: p.specializations.find((sp) => sp.id === r.chosen_specialization_id)?.name ?? null,
+                    assignedSectionId: r.assigned_section_id ?? null,
+                    assignedSectionName: existing?.assignedSectionName ?? null,
+                    assignedSeat: r.assigned_seat ?? null,
+                    group: r.group_number ?? null,
+                  };
+                });
+                const merged = [
+                  ...(myRecord ? [myRecord] : []),
+                  ...peerList.filter((ps: any) => ps.id !== (myRecord?.id ?? "")),
+                ];
+                return { ...p, students: merged };
+              });
+            } catch { /* ignore */ }
+          };
+
+          const channel = supabase
+            .channel(`student-peers-${specId}`)
+            .on("postgres_changes", {
+              event: "*", schema: "public", table: "students",
+              filter: `chosen_specialization_id=eq.${specId}`,
+            }, () => { refreshPeers(); })
+            .subscribe();
+          window.addEventListener("beforeunload", () => supabase.removeChannel(channel), { once: true });
+        }
+        return;
       } catch { /* fall through */ }
     }
     setSession(s);
+  };
   };
 
   // Persist current page so refresh returns to the same page
@@ -3358,12 +3364,13 @@ export default function Index() {
             assignedSeat:         r.assigned_seat ?? null,
             group:                r.group_number ?? null,
           };
-          return {
-            ...p,
-            students: existing
-              ? p.students.map((s) => s.id === r.id ? updated : s)
-              : [...p.students, updated],
-          };
+          // Deduplicate by email — guards against race between DB reload and realtime
+          const deduped = existing
+            ? p.students.map((s) => s.id === r.id ? updated : s)
+            : p.students.some((s) => s.email === updated.email)
+              ? p.students.map((s) => s.email === updated.email ? updated : s)
+              : [...p.students, updated];
+          return { ...p, students: deduped };
         });
       })
       .subscribe();
