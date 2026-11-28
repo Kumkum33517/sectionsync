@@ -233,7 +233,7 @@ const initials = (name: string) => name.split(" ").map((p) => p[0]).slice(0, 2).
 // ─────────────────────────────────────────────────────────────────
 // Login
 // ─────────────────────────────────────────────────────────────────
-function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNullable<Session>) => void }) {
+function LoginScreen({ state, onLogin, onForgot }: { state: AppState; onLogin: (s: NonNullable<Session>) => void; onForgot: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -326,6 +326,161 @@ function LoginScreen({ state, onLogin }: { state: AppState; onLogin: (s: NonNull
         <p className="mt-4 text-center text-xs text-[#71818a]">
           No self-registration. Only authorized users can sign in.
         </p>
+        <p className="mt-2 text-center">
+          <button onClick={onForgot} className="text-xs text-[#71818a] hover:text-[#0b1825] underline transition">Forgot password?</button>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Forgot password
+// ─────────────────────────────────────────────────────────────────
+function ForgotPasswordScreen({ onBack }: { onBack: () => void }) {
+  const [email, setEmail] = useState("");
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    const em = email.trim().toLowerCase();
+    if (!em) { setError("Enter your email address."); return; }
+    setLoading(true);
+    const { error: err } = await supabase.auth.resetPasswordForEmail(em, {
+      redirectTo: `${window.location.origin}/?type=recovery`,
+    });
+    setLoading(false);
+    if (err) { setError("Could not send reset email. Check the address and try again."); return; }
+    setSent(true);
+  };
+
+  return (
+    <div className="min-h-screen bg-[#f5f6ef] flex items-center justify-center px-4">
+      <div className="w-full max-w-md">
+        <div className="flex items-center gap-3 mb-8">
+          <div className="h-10 w-10 rounded-xl bg-[#0b1825] flex items-center justify-center">
+            <Waypoints size={18} className="text-[#d8ff5b]" />
+          </div>
+          <div>
+            <p className="font-display font-bold text-[#0b1825] text-lg leading-none">SectionSync</p>
+            <p className="text-xs text-[#71818a] mt-0.5">NCU · 2nd Year Portal</p>
+          </div>
+        </div>
+        <Card className="p-8">
+          {sent ? (
+            <div className="space-y-4 text-center">
+              <div className="h-12 w-12 rounded-full bg-emerald-100 flex items-center justify-center mx-auto">
+                <Check size={22} className="text-emerald-600" />
+              </div>
+              <h2 className="font-display text-xl font-bold text-[#0b1825]">Check your email</h2>
+              <p className="text-sm text-[#71818a]">A password reset link has been sent to <strong>{email}</strong>. It expires in 1 hour.</p>
+              <Btn variant="secondary" onClick={onBack} className="w-full">Back to sign in</Btn>
+            </div>
+          ) : (
+            <>
+              <h1 className="font-display text-2xl font-bold text-[#0b1825] mb-1">Forgot password</h1>
+              <p className="text-sm text-[#71818a] mb-6">Enter your email and we'll send you a reset link.</p>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <Input label="Email address" type="email" value={email}
+                  onChange={(e) => setEmail(e.target.value)} autoFocus />
+                {error && (
+                  <p className="text-sm text-red-600 flex items-center gap-1.5">
+                    <AlertTriangle size={13} />{error}
+                  </p>
+                )}
+                <Btn type="submit" className="w-full" disabled={loading}>
+                  {loading ? "Sending…" : <><Mail size={14} /> Send reset link</>}
+                </Btn>
+              </form>
+              <button onClick={onBack} className="mt-4 w-full text-center text-sm text-[#71818a] hover:text-[#0b1825] transition">
+                Back to sign in
+              </button>
+            </>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Reset password (landed from email link with ?type=recovery)
+// ─────────────────────────────────────────────────────────────────
+function ResetPasswordScreen({ onDone }: { onDone: () => void }) {
+  const [newPass, setNewPass] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (newPass.length < 8) { setError("Password must be at least 8 characters."); return; }
+    if (newPass !== confirm) { setError("Passwords do not match."); return; }
+    setLoading(true);
+    const { error: err } = await supabase.auth.updateUser({ password: newPass });
+    setLoading(false);
+    if (err) { setError("Could not update password. The link may have expired — request a new one."); return; }
+    setDone(true);
+    // Clear the recovery params from the URL without a full reload
+    window.history.replaceState({}, "", "/");
+    setTimeout(onDone, 2000);
+  };
+
+  return (
+    <div className="min-h-screen bg-[#f5f6ef] flex items-center justify-center px-4">
+      <div className="w-full max-w-md">
+        <div className="flex items-center gap-3 mb-8">
+          <div className="h-10 w-10 rounded-xl bg-[#0b1825] flex items-center justify-center">
+            <Waypoints size={18} className="text-[#d8ff5b]" />
+          </div>
+          <div>
+            <p className="font-display font-bold text-[#0b1825] text-lg leading-none">SectionSync</p>
+            <p className="text-xs text-[#71818a] mt-0.5">NCU · 2nd Year Portal</p>
+          </div>
+        </div>
+        <Card className="p-8">
+          {done ? (
+            <div className="space-y-4 text-center">
+              <div className="h-12 w-12 rounded-full bg-emerald-100 flex items-center justify-center mx-auto">
+                <Check size={22} className="text-emerald-600" />
+              </div>
+              <h2 className="font-display text-xl font-bold text-[#0b1825]">Password updated</h2>
+              <p className="text-sm text-[#71818a]">Redirecting you to sign in…</p>
+            </div>
+          ) : (
+            <>
+              <h1 className="font-display text-2xl font-bold text-[#0b1825] mb-1">Set new password</h1>
+              <p className="text-sm text-[#71818a] mb-6">Choose a new password for your account.</p>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-[#0b1825] mb-1.5">New password</label>
+                  <input type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)}
+                    placeholder="At least 8 characters" autoFocus
+                    className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-4 py-2.5 text-sm outline-none focus:border-[#0b1825] focus:ring-2 focus:ring-[#0b1825]/10 transition" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-[#0b1825] mb-1.5">Confirm password</label>
+                  <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
+                    placeholder="Repeat your new password"
+                    className="w-full rounded-xl border border-[#dde4cc] bg-[#f9faf3] px-4 py-2.5 text-sm outline-none focus:border-[#0b1825] focus:ring-2 focus:ring-[#0b1825]/10 transition" />
+                </div>
+                {error && (
+                  <p className="text-sm text-red-600 flex items-center gap-1.5">
+                    <AlertTriangle size={13} />{error}
+                  </p>
+                )}
+                <Btn type="submit" className="w-full" disabled={loading}>
+                  {loading ? "Saving…" : <><Check size={14} /> Set new password</>}
+                </Btn>
+              </form>
+            </>
+          )}
+        </Card>
       </div>
     </div>
   );
@@ -3037,6 +3192,8 @@ function ChangePasswordPage({ session, showToast }: {
 export default function Index() {
   const [session, setSession]       = useState<Session>(null);
   const [sessionChecked, setSessionChecked] = useState(false); // true once we know if a session exists
+  const [showForgot, setShowForgot]   = useState(false);
+  const [isRecovery, setIsRecovery]   = useState(false); // true when landed from a password-reset link
   const [state, setState]           = useState<AppState>(() => createInitialData());
   const [adminPage, setAdminPage]   = useState<AdminPage>(() => {
     const saved = sessionStorage.getItem("adminPage") as AdminPage | null;
@@ -3054,6 +3211,20 @@ export default function Index() {
   // Load all data from Supabase on startup
   useEffect(() => {
     (async () => {
+      // Detect Supabase password-recovery redirect (?type=recovery in the URL hash)
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const qParams    = new URLSearchParams(window.location.search);
+      if (hashParams.get("type") === "recovery" || qParams.get("type") === "recovery") {
+        // Supabase embeds the session in the URL hash — exchange it
+        const { data: { session: recoverySess } } = await supabase.auth.getSession();
+        if (recoverySess) {
+          await supabase.auth.setSession({ access_token: recoverySess.access_token, refresh_token: recoverySess.refresh_token });
+        }
+        setIsRecovery(true);
+        setSessionChecked(true);
+        return; // Skip normal session restore — just show the reset form
+      }
+
       // Load specializations, config, and sections in parallel FIRST so they're
       // all available before session restore — prevents race conditions
       const [specsRes, configRes, sectionsRes] = await Promise.all([
@@ -3389,7 +3560,9 @@ export default function Index() {
       </div>
     </div>
   );
-  if (!session) return <LoginScreen state={state} onLogin={handleLogin} />;
+  if (isRecovery) return <ResetPasswordScreen onDone={() => { setIsRecovery(false); supabase.auth.signOut(); }} />;
+  if (showForgot) return <ForgotPasswordScreen onBack={() => setShowForgot(false)} />;
+  if (!session) return <LoginScreen state={state} onLogin={handleLogin} onForgot={() => setShowForgot(true)} />;
 
   const isAdmin = session.role === "admin";
   const liveMe  = session.studentId ? state.students.find((s) => s.id === session.studentId) ?? null : null;
